@@ -1,0 +1,28 @@
+{
+  "name": "my-project",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Yarn workspaces monorepo with AI agent conventions",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "yarn workspace @my-project/web dev",
+    "dev:web": "yarn workspace @my-project/web dev",
+    "build": "yarn workspaces foreach -A -t run build",
+    "build:web": "yarn workspace @my-project/web build",
+    "lint": "yarn workspaces foreach -A run lint",
+    "type-check": "yarn workspaces foreach -A -t run type-check",
+    "test": "yarn workspaces foreach -A -t run test",
+    "clean": "yarn workspaces foreach -A run clean && rm -rf node_modules"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "yarn": ">=1.22.0"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "prettier": "^3.8.1"
+  },
+  "packageManager": "yarn@4.13.0"
+}
