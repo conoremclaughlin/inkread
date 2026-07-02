@@ -39,22 +39,40 @@ Throughout the session, use `update_session_phase` for structural status changes
 
 ## Project Overview
 
-<!-- Replace this section with your project's description -->
+**inkread** — an iOS reader app that fixes what Apple Books gets wrong:
+
+- Import PDFs and automatically convert them to EPUB (reflowable, far nicer to read)
+- Read EPUBs with a fast, themeable reader
+- Listen to any book as an audiobook using on-device iOS AI voices (AVSpeechSynthesizer)
+- Highlight passages and take notes without friction
+- Share passages and export notes/highlights as Markdown (Notion-friendly) via the share sheet
+- Local-first library with room for sync and community translations later
 
 This is a yarn workspaces monorepo:
 
-- **`packages/web`** — Next.js web application (Next.js 16, React 19, Tailwind v4, TanStack Query)
+- **`packages/core`** — pure TypeScript domain logic: PDF-text → chapter segmentation, EPUB 3 builder, annotation models, Markdown/Notion export. No React Native imports; fully unit-tested in Node with vitest.
+- **`packages/mobile`** — Expo (React Native) iOS app. Uses `@inkread/core` for all conversion/export logic. PDF text extraction runs in a hidden WebView with a bundled pdf.js; TTS via `expo-speech`; storage via `expo-sqlite` + `expo-file-system`.
 
 ## Architecture
 
 ```
 packages/
-  web/
+  core/
     src/
-      app/           # Next.js App Router pages
-      components/    # React components
-      lib/           # Utilities and shared logic
+      models/        # Book, Chapter, Annotation, Position types
+      pdf/           # PDF text → structured chapters (segmentation heuristics)
+      epub/          # EPUB 3 assembly (fflate zip, OPF/nav generation)
+      export/        # Annotations → Markdown / share text
+  mobile/
+    src/
+      screens/       # Library, Reader, Book detail, Notes
+      reader/        # WebView reader HTML/JS bridge (selection, highlights, pagination)
+      tts/           # Sentence-queue TTS controller over expo-speech
+      pdf/           # pdf.js WebView extractor bridge
+      store/         # SQLite persistence + file storage
 ```
+
+Design rule: anything that can be pure TypeScript lives in `core` where it is testable in Node. `mobile` owns only UI, native APIs, and glue.
 
 ## Coding Conventions
 
@@ -70,9 +88,8 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) for the full reference on coding style,
 ```bash
 # Root
 yarn install          # Install all workspaces
-yarn dev              # Web dev server
-yarn build            # Build all packages
-yarn lint             # Lint all packages
+yarn test             # Run all tests (core: vitest)
 yarn type-check       # Type-check all packages
-yarn test             # Run all tests
+yarn ios              # Build + run the iOS app on a simulator
+yarn dev              # Start the Expo dev server
 ```

@@ -1,54 +1,34 @@
-# ink-boilerplate
+# inkread
 
-Monorepo boilerplate with AI agent conventions and a Next.js starter.
+An iOS reading app that doesn't fight you.
 
-## What's included
+Apple Books makes PDFs miserable, note-taking painful, and getting your notes *out* nearly impossible. inkread fixes that:
 
-- **Yarn 4 workspaces** monorepo setup
-- **`packages/web`** — Next.js 16, React 19, Tailwind v4, TanStack Query
-- **AGENTS.md** — canonical AI agent guidelines (session init, coding conventions, commands)
-- **CLAUDE.md / GEMINI.md** — symlinks to AGENTS.md
-- **CONTRIBUTING.md** — git conventions (Angular commits, GitHub flow, no-squash merging, code comments, PR format)
-- **`.ink/`** — [Inkwell](https://github.com/conoremclaughlin/inkwell) integration scaffolding
+- **PDF → EPUB conversion** — import any PDF and read it as a reflowable EPUB with proper typography instead of pinch-zooming a fixed page.
+- **Listen like an audiobook** — any book, read aloud with the on-device iOS AI voices. Pick up where you left off, sentence-level tracking.
+- **Frictionless notes & highlights** — select, highlight, annotate. No modal maze.
+- **Your notes are yours** — export all highlights and notes for a book as clean Markdown (pastes perfectly into Notion, Obsidian, anywhere) or share individual passages with attribution via the share sheet.
+- **Local-first library** — books live on device; sync and community translations are on the roadmap.
 
-## Quick start
+## Status
 
-```bash
-# Clone and rename
-git clone https://github.com/conoremclaughlin/ink-boilerplate.git my-project
-cd my-project
-
-# Find-and-replace "my-project" with your project name in:
-#   - package.json (name, description, scripts)
-#   - packages/web/package.json (name)
-#   - AGENTS.md (Project Overview section)
-#   - packages/web/src/app/layout.tsx (metadata)
-#   - packages/web/src/app/page.tsx (content)
-
-# Install and run
-yarn install
-yarn dev
-```
+Early development. Private while licensing implications of the conversion pipeline are sorted out.
 
 ## Structure
 
-```
-.
-├── AGENTS.md              # AI agent guidelines (source of truth)
-├── CLAUDE.md -> AGENTS.md # Claude-specific pointer
-├── GEMINI.md -> AGENTS.md # Gemini-specific pointer
-├── CONTRIBUTING.md        # Git and coding conventions
-├── package.json           # Root workspace config
-├── packages/
-│   └── web/               # Next.js application
-│       ├── src/
-│       │   ├── app/       # App Router pages
-│       │   ├── components/# React components
-│       │   └── lib/       # Utilities
-│       └── ...
-└── .ink/                  # Inkwell config
+Yarn 4 workspaces monorepo:
+
+| Package | What it is |
+| --- | --- |
+| `packages/core` | Pure TypeScript: PDF-text → chapter segmentation, EPUB 3 builder, annotation models, Markdown export. Unit-tested with vitest. |
+| `packages/mobile` | Expo (React Native) iOS app. Reader UI, TTS playback, pdf.js extraction, SQLite storage. |
+
+## Development
+
+```bash
+yarn install
+yarn test          # core unit tests
+yarn ios           # run the app on an iOS simulator
 ```
 
-## License
-
-MIT
+See [AGENTS.md](./AGENTS.md) for architecture and [CONTRIBUTING.md](./CONTRIBUTING.md) for conventions.
