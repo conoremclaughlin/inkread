@@ -30,6 +30,8 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "postinstall": "node scripts/embed-pdfjs.mjs",
+    "prestart": "node scripts/embed-pdfjs.mjs"
   }
 }
