@@ -10,4 +10,4 @@ export {
   type SegmentOptions,
 } from './pdf/segment';
 export { exportAnnotationsMarkdown, formatPassageShare } from './export/markdown';
-export { splitSentences } from './tts/sentences';
+export { splitSentences, type Sentence } from './tts/sentences';
