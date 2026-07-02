@@ -1453,6 +1453,7 @@ __metadata:
   dependencies:
     "@types/node": "npm:^22.10.0"
     fflate: "npm:^0.8.2"
+    pdfjs-dist: "npm:^6.1.200"
     typescript: "npm:^5.8.0"
     vitest: "npm:^3.0.0"
   languageName: unknown

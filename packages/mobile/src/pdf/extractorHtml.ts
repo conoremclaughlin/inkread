@@ -50,7 +50,7 @@ export function buildExtractorHtml(): string {
       const b64 = chunks.join('');
       chunks.length = 0;
       const data = decodeBase64(b64);
-      const doc = await pdfjs.getDocument({ data, isEvalSupported: false }).promise;
+      const doc = await pdfjs.getDocument({ data }).promise;
       let title, author;
       try {
         const meta = await doc.getMetadata();
