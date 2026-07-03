@@ -19,7 +19,7 @@ import type { RootStackParamList } from '../navigation';
 import { deleteAnnotation, getBook, listAnnotations } from '../store/db';
 import { epubFile, writeShareFile } from '../store/files';
 import { colors } from '../ui/theme';
-import { HIGHLIGHT_COLORS } from '../reader/readerHtml';
+import { HIGHLIGHT_COLORS } from '@inkread/core';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Notes'>;
 

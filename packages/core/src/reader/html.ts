@@ -1,4 +1,4 @@
-import type { Annotation, Chapter } from '@inkread/core';
+import type { Annotation, Chapter } from '../models/types';
 
 /**
  * Chapter → self-contained reader HTML.
@@ -134,7 +134,15 @@ export function buildReaderHtml(
 ${paragraphsHtml}
 <script>
 (function () {
-  var post = function (msg) { window.ReactNativeWebView.postMessage(JSON.stringify(msg)); };
+  // Host bridge: React Native WebView on mobile, parent iframe on web.
+  var post = function (msg) {
+    var json = JSON.stringify(msg);
+    if (window.ReactNativeWebView) {
+      window.ReactNativeWebView.postMessage(json);
+    } else if (window.parent && window.parent !== window) {
+      window.parent.postMessage({ source: 'inkread-reader', payload: json }, '*');
+    }
+  };
 
   function paragraphOf(node) {
     var el = node.nodeType === 1 ? node : node.parentElement;

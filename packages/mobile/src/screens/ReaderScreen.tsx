@@ -21,7 +21,7 @@ import type { RootStackParamList } from '../navigation';
 import { AUTODEMO } from '../dev/autodemo';
 import { exportAnnotationsMarkdown } from '@inkread/core';
 import { newId } from '../lib/id';
-import { buildReaderHtml, HIGHLIGHT_COLORS, type ReaderTheme } from '../reader/readerHtml';
+import { buildReaderHtml, HIGHLIGHT_COLORS, type ReaderTheme } from '@inkread/core';
 import {
   deleteAnnotation,
   getBook,
