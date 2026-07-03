@@ -50,8 +50,9 @@ Throughout the session, use `update_session_phase` for structural status changes
 
 This is a yarn workspaces monorepo:
 
-- **`packages/core`** — pure TypeScript domain logic: PDF-text → chapter segmentation, EPUB 3 builder, annotation models, Markdown/Notion export. No React Native imports; fully unit-tested in Node with vitest.
-- **`packages/mobile`** — Expo (React Native) iOS app. Uses `@inkread/core` for all conversion/export logic. PDF text extraction runs in a hidden WebView with a bundled pdf.js; TTS via `expo-speech`; storage via `expo-sqlite` + `expo-file-system`.
+- **`packages/core`** — pure TypeScript domain logic: PDF-text → chapter segmentation, EPUB 3 builder, reader HTML (shared by mobile and web), annotation models, Markdown/Notion export. Fully unit-tested in Node with vitest.
+- **`packages/mobile`** — Expo (React Native) iOS app. Uses `@inkread/core` for all conversion/export logic. PDF text extraction runs in a hidden WebView with a bundled pdf.js; TTS via `expo-speech`; storage via `expo-sqlite` + `expo-file-system` (local-first).
+- **`packages/web`** — Next.js 16 e-reader + the API. Supabase cookie-session auth (`@supabase/ssr`), route handlers behind a `LibraryRepository` interface (never query the provider directly), in-browser pdf.js import, iframe reader sharing core's HTML, `speechSynthesis` listen mode. Local Supabase at ports 545xx (`supabase start`); web dev server on 6021.
 
 ## Architecture
 
@@ -92,4 +93,6 @@ yarn test             # Run all tests (core: vitest)
 yarn type-check       # Type-check all packages
 yarn ios              # Build + run the iOS app on a simulator
 yarn dev              # Start the Expo dev server
+supabase start        # Local Postgres/auth stack (ports 545xx)
+yarn workspace @inkread/web dev   # Web e-reader + API on http://127.0.0.1:6021
 ```
