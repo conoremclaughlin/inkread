@@ -18,6 +18,8 @@ import {
   type HighlightColor,
 } from '@inkread/core';
 import type { RootStackParamList } from '../navigation';
+import { AUTODEMO } from '../dev/autodemo';
+import { exportAnnotationsMarkdown } from '@inkread/core';
 import { newId } from '../lib/id';
 import { buildReaderHtml, HIGHLIGHT_COLORS, type ReaderTheme } from '../reader/readerHtml';
 import {
@@ -266,6 +268,43 @@ export function ReaderScreen({ route, navigation }: Props) {
     },
     [bookId, chapterIndex, handleTapHighlight],
   );
+
+  const autodemoRan = useRef(false);
+  useEffect(() => {
+    if (!__DEV__ || !AUTODEMO || autodemoRan.current || !book || !chapter) return;
+    autodemoRan.current = true;
+    const timer = setTimeout(() => {
+      const end = Math.max(chapterText.indexOf('.') + 1, 40);
+      console.log('[autodemo] inserting highlight + note on first sentence');
+      insertAnnotation({
+        id: newId('ann'),
+        bookId,
+        kind: 'note',
+        locator: { chapterIndex, start: 0, end },
+        passage: chapterText.slice(0, end),
+        note: 'Autodemo: what a great opening.',
+        color: 'green',
+        chapterTitle: chapter.title,
+        createdAt: new Date().toISOString(),
+      });
+      reloadAnnotations();
+      console.log(
+        '[autodemo] markdown export:\n' +
+          exportAnnotationsMarkdown(book, listAnnotations(bookId)),
+      );
+      setTimeout(() => {
+        console.log('[autodemo] starting TTS');
+        void openTts();
+        setTimeout(() => {
+          console.log('[autodemo] stopping TTS');
+          closeTts();
+          console.log('[autodemo] COMPLETE');
+        }, 12000);
+      }, 2000);
+    }, 2500);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [book, chapter]);
 
   const goToChapter = useCallback((index: number) => {
     restoreOffsetRef.current = 0;

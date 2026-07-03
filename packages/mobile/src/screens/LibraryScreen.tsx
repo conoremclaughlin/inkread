@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -11,10 +11,12 @@ import {
 import { useFocusEffect } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import * as DocumentPicker from 'expo-document-picker';
-import { File } from 'expo-file-system';
+import { File, Paths } from 'expo-file-system';
 import type { PdfPage } from '@inkread/core';
 import type { RootStackParamList } from '../navigation';
-import { bytesToBase64 } from '../lib/base64';
+import { SAMPLE_PDF_BASE64, SAMPLE_PDF_TITLE } from '../assets/samplePdf';
+import { AUTODEMO } from '../dev/autodemo';
+import { base64ToBytes, bytesToBase64 } from '../lib/base64';
 import { finishConversion } from '../convert/convertPdf';
 import { PdfExtractor, type PdfMeta } from '../pdf/PdfExtractor';
 import { deleteBook, getPosition, listBooks, type BookRecord } from '../store/db';
@@ -58,6 +60,27 @@ export function LibraryScreen({ navigation }: Props) {
       Alert.alert('Import failed', String(error instanceof Error ? error.message : error));
     }
   }, []);
+
+  const startSampleImport = useCallback(() => {
+    const file = new File(Paths.cache, 'sample-book.pdf');
+    file.write(base64ToBytes(SAMPLE_PDF_BASE64));
+    setJob({
+      pdfBase64: SAMPLE_PDF_BASE64,
+      sourceUri: file.uri,
+      fileName: SAMPLE_PDF_TITLE,
+      pagesDone: 0,
+      pageCount: 0,
+    });
+  }, []);
+
+  const autodemoRan = useRef(false);
+  useEffect(() => {
+    if (__DEV__ && AUTODEMO && !autodemoRan.current && listBooks().length === 0) {
+      autodemoRan.current = true;
+      console.log('[autodemo] importing sample book');
+      startSampleImport();
+    }
+  }, [startSampleImport]);
 
   const handleDone = useCallback(
     (pages: PdfPage[], meta: PdfMeta) => {
@@ -142,6 +165,9 @@ export function LibraryScreen({ navigation }: Props) {
               Import a PDF and inkread will convert it into a clean, reflowable book you can read,
               listen to, and annotate.
             </Text>
+            <Pressable style={styles.sampleButton} onPress={startSampleImport} disabled={!!job}>
+              <Text style={styles.sampleButtonText}>Try a sample book</Text>
+            </Pressable>
           </View>
         }
       />
@@ -198,6 +224,15 @@ const styles = StyleSheet.create({
   empty: { alignItems: 'center', marginTop: 120, paddingHorizontal: 32 },
   emptyTitle: { fontSize: 20, fontWeight: '600', color: colors.ink },
   emptyText: { marginTop: 8, textAlign: 'center', color: colors.inkSoft, lineHeight: 20 },
+  sampleButton: {
+    marginTop: 20,
+    borderWidth: 1,
+    borderColor: colors.accent,
+    borderRadius: 20,
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+  },
+  sampleButtonText: { color: colors.accent, fontWeight: '600' },
   fab: {
     position: 'absolute',
     bottom: 28,
