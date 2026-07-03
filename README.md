@@ -14,6 +14,14 @@ Apple Books makes PDFs miserable, note-taking painful, and getting your notes *o
 
 Early development. Private while licensing implications of the conversion pipeline are sorted out.
 
+## Roadmap
+
+- **EPUB import** — read existing EPUBs, not just converted PDFs (parser lands in `core/epub`).
+- **Sync** — local-first library synced through a small backend; books and annotations as CRDT-ish merge of per-device state.
+- **Community translations** — translate chapters on device (or via an LLM backend), push translations up for other readers of the same book; `TextLocator` offsets already give stable anchor points.
+- **Notion API export** — direct push of notes to a Notion database as an alternative to Markdown share.
+- **Background audio** — keep TTS playing with the screen locked (needs `UIBackgroundModes: audio` in a dev build; Expo Go can't).
+
 ## Structure
 
 Yarn 4 workspaces monorepo:
