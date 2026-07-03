@@ -22,6 +22,26 @@ export function buildExtractorHtml(): string {
 <script>
   const post = (msg) => window.ReactNativeWebView.postMessage(JSON.stringify(msg));
   window.onerror = (m, s, l) => { post({ type: 'error', message: String(m) + ' @' + l }); };
+  window.onunhandledrejection = (e) => {
+    post({ type: 'error', message: 'unhandled: ' + String(e.reason && e.reason.message || e.reason) });
+  };
+  // WKWebView can't run pdf.js's blob-URL module worker; removing Worker
+  // forces pdf.js onto its main-thread fake-worker path (a dynamic import),
+  // which works fine here and is plenty fast for text extraction.
+  window.Worker = undefined;
+  // WebKit lacks ReadableStream async iteration, which pdf.js's
+  // getTextContent relies on ("for await (const chunk of stream)").
+  if (window.ReadableStream && !ReadableStream.prototype[Symbol.asyncIterator]) {
+    ReadableStream.prototype[Symbol.asyncIterator] = function () {
+      const reader = this.getReader();
+      return {
+        next: () => reader.read(),
+        return: (value) => { reader.releaseLock(); return Promise.resolve({ done: true, value }); },
+        [Symbol.asyncIterator]() { return this; },
+      };
+    };
+    ReadableStream.prototype.values ||= ReadableStream.prototype[Symbol.asyncIterator];
+  }
 </script>
 <script type="module">
   const post = (msg) => window.ReactNativeWebView.postMessage(JSON.stringify(msg));
@@ -34,9 +54,11 @@ export function buildExtractorHtml(): string {
     pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 
     const chunks = [];
+    const describeError = (e) =>
+      String(e && e.message || e) + (e && e.stack ? ' | ' + String(e.stack).slice(0, 400) : '');
     window.__inkread = {
       addChunk(b64) { chunks.push(b64); },
-      finish() { run().catch((e) => post({ type: 'error', message: String(e && e.message || e) })); },
+      finish() { run().catch((e) => post({ type: 'error', message: describeError(e) })); },
     };
 
     function decodeBase64(b64) {
@@ -50,7 +72,9 @@ export function buildExtractorHtml(): string {
       const b64 = chunks.join('');
       chunks.length = 0;
       const data = decodeBase64(b64);
-      const doc = await pdfjs.getDocument({ data }).promise;
+      post({ type: 'log', message: 'decoded ' + data.length + ' bytes, opening document' });
+      const loadingTask = pdfjs.getDocument({ data });
+      const doc = await loadingTask.promise;
       let title, author;
       try {
         const meta = await doc.getMetadata();
@@ -84,8 +108,8 @@ export function buildExtractorHtml(): string {
         });
         page.cleanup();
       }
-      await doc.destroy();
       post({ type: 'done' });
+      try { await loadingTask.destroy(); } catch (e) { /* page is one-shot; ignore */ }
     }
 
     post({ type: 'ready' });

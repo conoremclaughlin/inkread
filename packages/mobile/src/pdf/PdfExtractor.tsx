@@ -64,6 +64,9 @@ export function PdfExtractor({ pdfBase64, onMeta, onPage, onDone, onError }: Pdf
       } catch {
         return;
       }
+      if (__DEV__ && msg.type !== 'page') {
+        console.log(`[extractor] ${event.nativeEvent.data.slice(0, 200)}`);
+      }
       switch (msg.type) {
         case 'ready':
           sendPdf();
@@ -106,7 +109,16 @@ export function PdfExtractor({ pdfBase64, onMeta, onPage, onDone, onError }: Pdf
         allowingReadAccessToURL={Paths.cache.uri}
         javaScriptEnabled
         onMessage={handleMessage}
-        onError={(e) => onError(`webview: ${e.nativeEvent.description}`)}
+        onError={(e) => {
+          if (__DEV__) console.log(`[extractor] webview error: ${e.nativeEvent.description}`);
+          onError(`webview: ${e.nativeEvent.description}`);
+        }}
+        onHttpError={(e) => {
+          if (__DEV__) console.log(`[extractor] http error: ${e.nativeEvent.statusCode}`);
+        }}
+        onLoadEnd={() => {
+          if (__DEV__) console.log('[extractor] webview loaded');
+        }}
       />
     </View>
   );
