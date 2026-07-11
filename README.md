@@ -30,6 +30,8 @@ Yarn 4 workspaces monorepo:
 | --- | --- |
 | `packages/core` | Pure TypeScript: PDF-text → chapter segmentation, EPUB 3 builder, annotation models, Markdown export. Unit-tested with vitest. |
 | `packages/mobile` | Expo (React Native) iOS app. Reader UI, TTS playback, pdf.js extraction, SQLite storage. |
+| `packages/web` | Next.js 16 e-reader + API. Supabase auth, repository-abstracted data layer, browser pdf.js import, speechSynthesis listen mode. |
+| `packages/desktop` | Electron shell wrapping the web e-reader (`yarn desktop`). |
 
 ## Development
 

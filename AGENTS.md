@@ -53,6 +53,7 @@ This is a yarn workspaces monorepo:
 - **`packages/core`** — pure TypeScript domain logic: PDF-text → chapter segmentation, EPUB 3 builder, reader HTML (shared by mobile and web), annotation models, Markdown/Notion export. Fully unit-tested in Node with vitest.
 - **`packages/mobile`** — Expo (React Native) iOS app. Uses `@inkread/core` for all conversion/export logic. PDF text extraction runs in a hidden WebView with a bundled pdf.js; TTS via `expo-speech`; storage via `expo-sqlite` + `expo-file-system` (local-first).
 - **`packages/web`** — Next.js 16 e-reader + the API. Supabase cookie-session auth (`@supabase/ssr`), route handlers behind a `LibraryRepository` interface (never query the provider directly), in-browser pdf.js import, iframe reader sharing core's HTML, `speechSynthesis` listen mode. Local Supabase at ports 545xx (`supabase start`); web dev server on 6021.
+- **`packages/desktop`** — Electron shell around the web app (`yarn desktop`, points at `APP_URL`, default http://127.0.0.1:6021). Session cookies persist, so it behaves like a signed-in native app.
 
 ## Architecture
 

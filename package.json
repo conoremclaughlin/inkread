@@ -2,7 +2,7 @@
   "name": "inkread",
   "version": "0.1.0",
   "private": true,
-  "description": "iOS reader app — convert PDFs to EPUB, read, listen, annotate, and share",
+  "description": "iOS reader app \u2014 convert PDFs to EPUB, read, listen, annotate, and share",
   "workspaces": [
     "packages/*"
   ],
@@ -14,7 +14,8 @@
     "lint": "yarn workspaces foreach -A run lint",
     "type-check": "yarn workspaces foreach -A -t run type-check",
     "test": "yarn workspaces foreach -A -t run test",
-    "clean": "yarn workspaces foreach -A run clean && rm -rf node_modules"
+    "clean": "yarn workspaces foreach -A run clean && rm -rf node_modules",
+    "desktop": "yarn workspace @inkread/desktop start"
   },
   "engines": {
     "node": ">=18.0.0",

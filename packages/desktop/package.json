@@ -1,0 +1,14 @@
+{
+  "name": "@inkread/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Electron shell for the inkread e-reader",
+  "main": "main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron ."
+  },
+  "devDependencies": {
+    "electron": "^38.0.0"
+  }
+}
