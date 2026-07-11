@@ -2,7 +2,7 @@
   "name": "inkread",
   "version": "0.1.0",
   "private": true,
-  "description": "iOS reader app \u2014 convert PDFs to EPUB, read, listen, annotate, and share",
+  "description": "iOS reader app — convert PDFs to EPUB, read, listen, annotate, and share",
   "workspaces": [
     "packages/*"
   ],

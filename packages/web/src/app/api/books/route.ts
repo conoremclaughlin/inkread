@@ -15,7 +15,7 @@ interface CreateBookBody {
   title?: string;
   author?: string;
   language?: string;
-  source?: 'pdf' | 'epub';
+  source?: 'pdf' | 'epub' | 'text';
   chapters?: Chapter[];
 }
 

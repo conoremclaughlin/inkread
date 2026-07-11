@@ -8,7 +8,8 @@
     "start": "next start -p 6021",
     "lint": "eslint",
     "type-check": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "import:texts": "tsx scripts/import-texts.ts"
   },
   "dependencies": {
     "@inkread/core": "workspace:*",
@@ -28,6 +29,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.2.10",
     "tailwindcss": "^4",
+    "tsx": "^4.23.0",
     "typescript": "^5",
     "vitest": "^3.0.0"
   }

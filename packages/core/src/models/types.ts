@@ -41,7 +41,7 @@ export interface BookMeta {
   author?: string;
   language?: string;
   /** Where this book came from. */
-  source: 'pdf' | 'epub';
+  source: 'pdf' | 'epub' | 'text';
   createdAt: string;
 }
 
