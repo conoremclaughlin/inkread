@@ -279,6 +279,8 @@ export class SupabaseLibraryRepository implements LibraryRepository {
       book_id: string;
       chapter_index: number;
       char_offset: number;
+      furthest_chapter_index: number;
+      furthest_offset: number;
       updated_at: string;
     };
     return {
@@ -286,16 +288,29 @@ export class SupabaseLibraryRepository implements LibraryRepository {
       chapterIndex: row.chapter_index,
       offset: row.char_offset,
       updatedAt: row.updated_at,
+      furthest: { chapterIndex: row.furthest_chapter_index, offset: row.furthest_offset },
     };
   }
 
   async savePosition(position: Omit<ReadingPosition, 'updatedAt'>): Promise<void> {
+    // The furthest pointer only moves forward; current moves freely.
+    const existing = await this.getPosition(position.bookId);
+    const prior = existing?.furthest ?? { chapterIndex: -1, offset: -1 };
+    const ahead =
+      position.chapterIndex > prior.chapterIndex ||
+      (position.chapterIndex === prior.chapterIndex && position.offset > prior.offset);
+    const furthest = ahead
+      ? { chapterIndex: position.chapterIndex, offset: position.offset }
+      : prior;
+
     const { error } = await this.supabase.from('reading_positions').upsert(
       {
         book_id: position.bookId,
         user_id: this.userId,
         chapter_index: position.chapterIndex,
         char_offset: position.offset,
+        furthest_chapter_index: furthest.chapterIndex,
+        furthest_offset: furthest.offset,
       },
       { onConflict: 'book_id,user_id' },
     );

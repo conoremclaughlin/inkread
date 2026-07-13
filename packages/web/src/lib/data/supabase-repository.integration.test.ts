@@ -199,6 +199,22 @@ describe.skipIf(!up)('SupabaseLibraryRepository (integration)', () => {
     await repository.deleteBook(book.id);
   });
 
+  it('keeps the furthest pointer as a forward-only high-water mark', async () => {
+    const book = (await repository.listBooks())[0]!;
+    await repository.savePosition({ bookId: book.id, chapterIndex: 2, offset: 100 });
+    // Moving backwards (re-reading) keeps furthest at chapter 2.
+    await repository.savePosition({ bookId: book.id, chapterIndex: 0, offset: 5 });
+    const position = await repository.getPosition(book.id);
+    expect(position?.chapterIndex).toBe(0);
+    expect(position?.furthest).toEqual({ chapterIndex: 2, offset: 100 });
+    // Reading past it moves the mark forward again.
+    await repository.savePosition({ bookId: book.id, chapterIndex: 2, offset: 200 });
+    expect((await repository.getPosition(book.id))?.furthest).toEqual({
+      chapterIndex: 2,
+      offset: 200,
+    });
+  });
+
   it('merges preference patches per user', async () => {
     expect(await repository.getPreferences()).toEqual({});
     await repository.savePreferences({ theme: 'midnight', fontSize: 21 });

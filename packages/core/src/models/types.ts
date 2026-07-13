@@ -81,4 +81,10 @@ export interface ReadingPosition {
   /** Character offset into the chapter plain text of the first visible line. */
   offset: number;
   updatedAt: string;
+  /**
+   * High-water mark — the furthest point ever read. Only moves forward;
+   * drives progress display and "resume where I got to" while the current
+   * position freely moves backwards for re-reading.
+   */
+  furthest?: { chapterIndex: number; offset: number };
 }

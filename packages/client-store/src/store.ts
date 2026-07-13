@@ -210,14 +210,33 @@ export class ClientStore {
   // --- positions ------------------------------------------------------------
 
   async upsertPosition(position: ReadingPosition): Promise<void> {
+    // Forward-only furthest pointer, mirroring the server's semantics.
+    const existing = await this.getPosition(position.bookId);
+    const prior = position.furthest ??
+      existing?.furthest ?? { chapterIndex: -1, offset: -1 };
+    const ahead =
+      position.chapterIndex > prior.chapterIndex ||
+      (position.chapterIndex === prior.chapterIndex && position.offset > prior.offset);
+    const furthest = ahead
+      ? { chapterIndex: position.chapterIndex, offset: position.offset }
+      : prior;
     await this.driver.run(
-      `insert into positions (book_id, chapter_index, char_offset, updated_at)
-       values (?, ?, ?, ?)
+      `insert into positions (book_id, chapter_index, char_offset, furthest_chapter_index, furthest_offset, updated_at)
+       values (?, ?, ?, ?, ?, ?)
        on conflict (book_id) do update set
          chapter_index = excluded.chapter_index,
          char_offset = excluded.char_offset,
+         furthest_chapter_index = excluded.furthest_chapter_index,
+         furthest_offset = excluded.furthest_offset,
          updated_at = excluded.updated_at`,
-      [position.bookId, position.chapterIndex, position.offset, position.updatedAt],
+      [
+        position.bookId,
+        position.chapterIndex,
+        position.offset,
+        furthest.chapterIndex,
+        furthest.offset,
+        position.updatedAt,
+      ],
     );
   }
 
@@ -226,6 +245,8 @@ export class ClientStore {
       book_id: string;
       chapter_index: number;
       char_offset: number;
+      furthest_chapter_index: number;
+      furthest_offset: number;
       updated_at: string;
     }>('select * from positions where book_id = ?', [bookId]);
     return row
@@ -234,6 +255,10 @@ export class ClientStore {
           chapterIndex: row.chapter_index,
           offset: row.char_offset,
           updatedAt: row.updated_at,
+          furthest: {
+            chapterIndex: row.furthest_chapter_index,
+            offset: row.furthest_offset,
+          },
         }
       : undefined;
   }

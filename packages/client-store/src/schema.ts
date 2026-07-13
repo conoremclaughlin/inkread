@@ -6,7 +6,7 @@ import type { SqlDriver } from './driver';
  * remains the source of truth; this holds what a device needs to read
  * offline plus sync bookkeeping.
  */
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 const DDL = `
 create table if not exists meta (
@@ -53,12 +53,24 @@ create table if not exists positions (
   book_id text primary key,
   chapter_index integer not null,
   char_offset integer not null,
+  furthest_chapter_index integer not null default 0,
+  furthest_offset integer not null default 0,
   updated_at text not null
 );
 `;
 
 export async function initSchema(driver: SqlDriver): Promise<void> {
   await driver.exec(DDL);
+  const row = await driver.get<{ value: string }>(
+    `select value from meta where key = 'schema_version'`,
+  );
+  const from = row ? parseInt(row.value, 10) : SCHEMA_VERSION;
+  if (from < 2) {
+    // v2: dual reading pointers (furthest-read high-water mark).
+    await driver.run('alter table positions add column furthest_chapter_index integer not null default 0');
+    await driver.run('alter table positions add column furthest_offset integer not null default 0');
+    await driver.run('update positions set furthest_chapter_index = chapter_index, furthest_offset = char_offset');
+  }
   await driver.run(
     `insert into meta (key, value) values ('schema_version', ?)
      on conflict (key) do update set value = excluded.value`,

@@ -29,8 +29,6 @@ interface ReaderProps {
   initialPreferences?: ReaderPreferences;
   /** Reading from the device cache; server writes are skipped. */
   offline?: boolean;
-  /** Re-reading from the start — don't move the saved bookmark. */
-  browseOnly?: boolean;
 }
 
 interface Selection {
@@ -86,7 +84,6 @@ export function Reader({
   initialPosition,
   initialPreferences,
   offline,
-  browseOnly,
 }: ReaderProps) {
   const [chapterIndex, setChapterIndex] = useState(
     Math.min(initialPosition?.chapterIndex ?? 0, chapters.length - 1),
@@ -132,6 +129,7 @@ export function Reader({
 
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const offsetRef = useRef(initialPosition?.offset ?? 0);
+  const [furthest, setFurthest] = useState(initialPosition?.furthest);
   const ttsRef = useRef<TtsPlayer | null>(null);
   const [ttsEngine, setTtsEngine] = useState<TtsEngine>();
   const [ttsProgress, setTtsProgress] = useState<number>();
@@ -221,8 +219,17 @@ export function Reader({
   const savePosition = useCallback(
     (offset: number) => {
       offsetRef.current = offset;
+      setFurthest((prior) => {
+        if (
+          !prior ||
+          chapterIndex > prior.chapterIndex ||
+          (chapterIndex === prior.chapterIndex && offset > prior.offset)
+        ) {
+          return { chapterIndex, offset };
+        }
+        return prior;
+      });
       if (saveTimer.current) clearTimeout(saveTimer.current);
-      if (browseOnly) return;
       saveTimer.current = setTimeout(() => {
         void fetch(`/api/books/${book.id}/position`, {
           method: 'PUT',
@@ -381,7 +388,7 @@ export function Reader({
 
   return (
     <div
-      className="flex h-screen flex-col transition-colors"
+      className="relative flex h-screen flex-col transition-colors"
       style={{ background: chrome.bg, color: chrome.fg }}
     >
       <header
@@ -690,6 +697,19 @@ export function Reader({
           </div>
         ) : null}
       </div>
+
+      {furthest && chapterIndex < furthest.chapterIndex ? (
+        <button
+          onClick={() => {
+            offsetRef.current = furthest.offset;
+            setSelection(undefined);
+            setChapterIndex(furthest.chapterIndex);
+          }}
+          className="absolute bottom-14 right-6 z-10 rounded-full bg-white px-4 py-2 text-xs font-semibold text-[#8b5e3c] shadow-lg ring-1 ring-[#e6dfd4] transition hover:bg-[#f0e6da]"
+        >
+          Resume at {chapters[furthest.chapterIndex]?.title ?? 'furthest point'} →
+        </button>
+      ) : null}
 
       <footer className="flex h-10 shrink-0 items-stretch justify-between px-2 text-sm">
         <button

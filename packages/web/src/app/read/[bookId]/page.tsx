@@ -32,9 +32,10 @@ export default async function ReadPage({
         book={book}
         chapters={chapters}
         initialAnnotations={annotations}
-        initialPosition={fromStart ? null : (position ?? null)}
+        initialPosition={
+          fromStart ? (position ? { ...position, chapterIndex: 0, offset: 0 } : null) : (position ?? null)
+        }
         initialPreferences={preferences}
-        browseOnly={fromStart}
       />
     );
   } catch (error) {

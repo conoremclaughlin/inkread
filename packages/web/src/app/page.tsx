@@ -16,7 +16,8 @@ export default async function LibraryPage() {
         books.map(async (book): Promise<[string, number]> => {
           const position = await repository.getPosition(book.id);
           if (!position || book.chapterCount === 0) return [book.id, 0];
-          return [book.id, Math.round(((position.chapterIndex + 1) / book.chapterCount) * 100)];
+          const marker = position.furthest ?? position;
+          return [book.id, Math.round(((marker.chapterIndex + 1) / book.chapterCount) * 100)];
         }),
       ),
     );
