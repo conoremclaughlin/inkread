@@ -43,6 +43,8 @@ async function main(): Promise<void> {
   const apiFlag = args.indexOf('--api');
   const headingsFlag = args.indexOf('--headings');
   const importerFlag = args.indexOf('--importer');
+  const appendFlag = args.indexOf('--append');
+  const appendBookId = appendFlag >= 0 ? args[appendFlag + 1] : undefined;
   const headings =
     headingsFlag >= 0
       ? (args[headingsFlag + 1] as NonNullable<TextToChaptersOptions['headings']>)
@@ -55,7 +57,7 @@ async function main(): Promise<void> {
   }
   const apiUrl = apiFlag >= 0 ? args[apiFlag + 1]! : (process.env.APP_URL ?? 'http://127.0.0.1:6021');
   const flagValueIndexes = new Set(
-    [apiFlag, headingsFlag, importerFlag].filter((i) => i >= 0).map((i) => i + 1),
+    [apiFlag, headingsFlag, importerFlag, appendFlag].filter((i) => i >= 0).map((i) => i + 1),
   );
   const directory = args.filter((a, i) => !a.startsWith('--') && !flagValueIndexes.has(i))[0];
 
@@ -98,21 +100,29 @@ async function main(): Promise<void> {
       console.warn(`skip  ${file} (no readable text)`);
       continue;
     }
-    const response = await fetch(`${apiUrl}/api/books`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ title, source: 'text', chapters }),
-    });
+    // --append: every file's chapters extend one existing book, in file order.
+    // Default: each file becomes its own book.
+    const response = appendBookId
+      ? await fetch(`${apiUrl}/api/books/${appendBookId}/chapters`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ chapters }),
+        })
+      : await fetch(`${apiUrl}/api/books`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ title, source: 'text', chapters }),
+        });
     if (response.ok) {
       imported += 1;
-      console.log(`ok    ${title} (${chapters.length} chapters)`);
+      console.log(`${appendBookId ? 'add' : 'ok '}   ${title} (${chapters.length} chapters)`);
     } else {
       failed += 1;
       const body = (await response.json().catch(() => ({}))) as { error?: string };
       console.error(`fail  ${title}: ${body.error ?? response.status}`);
     }
   }
-  console.log(`\nImported ${imported}/${files.length} (${failed} failed)`);
+  console.log(`\n${appendBookId ? 'Appended' : 'Imported'} ${imported}/${files.length} (${failed} failed)`);
   process.exit(failed > 0 ? 1 : 0);
 }
 

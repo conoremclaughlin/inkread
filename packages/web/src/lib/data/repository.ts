@@ -49,6 +49,8 @@ export interface LibraryRepository {
   getBook(bookId: string): Promise<BookSummary | undefined>;
   getChapters(bookId: string): Promise<Chapter[] | undefined>;
   createBook(input: CreateBookInput): Promise<BookSummary>;
+  /** Adds chapters after the book's current last chapter; annotations untouched. */
+  appendChapters(bookId: string, chapters: Chapter[]): Promise<BookSummary>;
   deleteBook(bookId: string): Promise<void>;
 
   listAnnotations(bookId: string): Promise<Annotation[]>;

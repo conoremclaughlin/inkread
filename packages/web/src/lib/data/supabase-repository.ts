@@ -119,14 +119,35 @@ export class SupabaseLibraryRepository implements LibraryRepository {
     return data ? rowToBook(data as BookRow) : undefined;
   }
 
+  private chapterRows(bookId: string, chapters: Chapter[], startIndex: number) {
+    return chapters.map((chapter, i) => ({
+      book_id: bookId,
+      user_id: this.userId,
+      chapter_index: startIndex + i,
+      title: chapter.title,
+      paragraphs: chapter.paragraphs,
+      source_pages: chapter.sourcePages ?? null,
+    }));
+  }
+
   async getChapters(bookId: string): Promise<Chapter[] | undefined> {
     const { data, error } = await this.supabase
-      .from('book_content')
-      .select('chapters')
+      .from('chapters')
+      .select('title, paragraphs, source_pages')
       .eq('book_id', bookId)
-      .maybeSingle();
+      .order('chapter_index');
     if (error) this.fail('getChapters', error);
-    return data ? ((data as { chapters: Chapter[] }).chapters ?? []) : undefined;
+    const rows = data as { title: string; paragraphs: string[]; source_pages: unknown }[];
+    if (rows.length === 0) {
+      // Distinguish "no such book" from "book with no content yet".
+      const book = await this.getBook(bookId);
+      return book ? [] : undefined;
+    }
+    return rows.map((row) => ({
+      title: row.title,
+      paragraphs: row.paragraphs,
+      sourcePages: (row.source_pages as Chapter['sourcePages']) ?? undefined,
+    }));
   }
 
   async createBook(input: CreateBookInput): Promise<BookSummary> {
@@ -145,16 +166,33 @@ export class SupabaseLibraryRepository implements LibraryRepository {
     if (error) this.fail('createBook', error);
     const book = rowToBook(data as BookRow);
 
-    const { error: contentError } = await this.supabase.from('book_content').insert({
-      book_id: book.id,
-      user_id: this.userId,
-      chapters: input.chapters,
-    });
+    const { error: contentError } = await this.supabase
+      .from('chapters')
+      .insert(this.chapterRows(book.id, input.chapters, 0));
     if (contentError) {
       await this.supabase.from('books').delete().eq('id', book.id);
-      this.fail('createBook(content)', contentError);
+      this.fail('createBook(chapters)', contentError);
     }
     return book;
+  }
+
+  async appendChapters(bookId: string, chapters: Chapter[]): Promise<BookSummary> {
+    const book = await this.getBook(bookId);
+    if (!book) throw new Error('appendChapters: book not found');
+
+    const { error } = await this.supabase
+      .from('chapters')
+      .insert(this.chapterRows(bookId, chapters, book.chapterCount));
+    if (error) this.fail('appendChapters', error);
+
+    const { data, error: updateError } = await this.supabase
+      .from('books')
+      .update({ chapter_count: book.chapterCount + chapters.length })
+      .eq('id', bookId)
+      .select()
+      .single();
+    if (updateError) this.fail('appendChapters(count)', updateError);
+    return rowToBook(data as BookRow);
   }
 
   async deleteBook(bookId: string): Promise<void> {

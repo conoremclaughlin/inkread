@@ -145,6 +145,23 @@ describe.skipIf(!up)('SupabaseLibraryRepository (integration)', () => {
     }
   });
 
+  it('appends chapters without touching annotations', async () => {
+    const book = (await repository.listBooks())[0]!;
+    const before = await repository.listAnnotations(book.id);
+
+    const updated = await repository.appendChapters(book.id, [
+      { title: 'Three', paragraphs: ['Appended paragraph.'] },
+    ]);
+    expect(updated.chapterCount).toBe(book.chapterCount + 1);
+
+    const chapters = await repository.getChapters(book.id);
+    expect(chapters).toHaveLength(book.chapterCount + 1);
+    expect(chapters![chapters!.length - 1]!.title).toBe('Three');
+    expect(chapters![0]!.paragraphs[0]).toBe('First paragraph.');
+
+    expect(await repository.listAnnotations(book.id)).toEqual(before);
+  });
+
   it('merges preference patches per user', async () => {
     expect(await repository.getPreferences()).toEqual({});
     await repository.savePreferences({ theme: 'midnight', fontSize: 21 });
