@@ -145,7 +145,8 @@ export function buildEpub(input: EpubInput): Uint8Array {
     files[`OEBPS/${chapterFileName(i)}`] = strToU8(chapterXhtml(chapter, language));
   });
 
-  // Fixed mtime keeps byte-identical output for identical input
-  // (zip timestamps can't be earlier than 1980).
-  return zipSync(files, { mtime: new Date('1980-01-01T00:00:00Z') });
+  // Fixed mtime keeps byte-identical output for identical input. Zip
+  // timestamps are local-time and can't be earlier than 1980, so use a
+  // local-time constructor — a UTC midnight would be 1979 west of Greenwich.
+  return zipSync(files, { mtime: new Date(1980, 5, 1) });
 }

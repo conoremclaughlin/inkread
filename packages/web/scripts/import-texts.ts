@@ -11,7 +11,7 @@
 import { readdirSync, readFileSync, existsSync } from 'node:fs';
 import { basename, extname, join, resolve } from 'node:path';
 import { createClient } from '@supabase/supabase-js';
-import { textToChapters } from '@inkread/core';
+import { textToChapters, type TextToChaptersOptions } from '@inkread/core';
 
 function loadDotEnvLocal(): void {
   const path = resolve(import.meta.dirname, '../.env.local');
@@ -26,10 +26,13 @@ async function main(): Promise<void> {
   loadDotEnvLocal();
   const args = process.argv.slice(2);
   const apiFlag = args.indexOf('--api');
+  const headingsFlag = args.indexOf('--headings');
+  const headings = (headingsFlag >= 0 ? args[headingsFlag + 1] : 'auto') as NonNullable<
+    TextToChaptersOptions['headings']
+  >;
   const apiUrl = apiFlag >= 0 ? args[apiFlag + 1]! : (process.env.APP_URL ?? 'http://127.0.0.1:6021');
-  const directory = args.filter(
-    (a, i) => !a.startsWith('--') && (apiFlag < 0 || i !== apiFlag + 1),
-  )[0];
+  const flagValueIndexes = new Set([apiFlag, headingsFlag].filter((i) => i >= 0).map((i) => i + 1));
+  const directory = args.filter((a, i) => !a.startsWith('--') && !flagValueIndexes.has(i))[0];
 
   const email = process.env.INKREAD_EMAIL;
   const password = process.env.INKREAD_PASSWORD;
@@ -65,7 +68,7 @@ async function main(): Promise<void> {
   for (const file of files) {
     const raw = readFileSync(join(directory, file), 'utf8');
     const title = basename(file, extname(file)).replace(/[-_]+/g, ' ').trim();
-    const chapters = textToChapters(raw, title);
+    const chapters = textToChapters(raw, title, { headings });
     if (chapters.length === 0) {
       console.warn(`skip  ${file} (no readable text)`);
       continue;

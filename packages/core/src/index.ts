@@ -17,4 +17,4 @@ export {
   type ReaderSettings,
 } from './reader/html';
 export { splitSentences, type Sentence } from './tts/sentences';
-export { textToChapters } from './text/segment';
+export { textToChapters, type TextToChaptersOptions } from './text/segment';

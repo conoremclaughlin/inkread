@@ -12,11 +12,21 @@ import type { Chapter } from '../models/types';
 const TEXT_HEADING_PATTERN =
   /^(chapter|part|book|section|prologue|epilogue|introduction|preface|foreword|appendix)\b/i;
 
-function isHeadingBlock(lines: string[]): boolean {
+export interface TextToChaptersOptions {
+  /**
+   * 'auto' (default) also treats "Chapter N" and short ALL-CAPS lines as
+   * headings; 'markdown' trusts only #/##/### lines — right for generated
+   * or curated sources where shouty prose would misfire.
+   */
+  headings?: 'auto' | 'markdown';
+}
+
+function isHeadingBlock(lines: string[], mode: 'auto' | 'markdown'): boolean {
   if (lines.length !== 1) return false;
   const line = lines[0]!.trim();
   if (line.length === 0 || line.length > 80) return false;
   if (/^#{1,3}\s+\S/.test(line)) return true;
+  if (mode === 'markdown') return false;
   if (TEXT_HEADING_PATTERN.test(line) && line.length < 60 && !/[.,;:]$/.test(line)) return true;
   // Short shouty lines ("PART TWO", "THE GARDEN") read as headings.
   const letters = line.replace(/[^A-Za-z]/g, '');
@@ -27,7 +37,12 @@ function headingText(line: string): string {
   return line.replace(/^#{1,3}\s+/, '').trim();
 }
 
-export function textToChapters(text: string, fallbackTitle = 'Beginning'): Chapter[] {
+export function textToChapters(
+  text: string,
+  fallbackTitle = 'Beginning',
+  options?: TextToChaptersOptions,
+): Chapter[] {
+  const mode = options?.headings ?? 'auto';
   const blocks = text
     .replace(/\r\n?/g, '\n')
     .split(/\n\s*\n+/)
@@ -50,7 +65,7 @@ export function textToChapters(text: string, fallbackTitle = 'Beginning'): Chapt
   };
 
   for (const lines of blocks) {
-    if (isHeadingBlock(lines)) {
+    if (isHeadingBlock(lines, mode)) {
       push();
       current = { title: headingText(lines[0]!), paragraphs: [] };
       continue;

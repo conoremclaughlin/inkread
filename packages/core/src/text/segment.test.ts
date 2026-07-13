@@ -51,6 +51,13 @@ describe('textToChapters', () => {
     expect(chapters[0]!.paragraphs).toHaveLength(2);
   });
 
+  it('trusts only markdown headings in markdown mode', () => {
+    const text = '# Real Chapter\n\nBody text.\n\nSHOUTED REACTION LINE\n\nMore body.';
+    const chapters = textToChapters(text, 'Doc', { headings: 'markdown' });
+    expect(chapters).toHaveLength(1);
+    expect(chapters[0]!.paragraphs).toEqual(['Body text.', 'SHOUTED REACTION LINE', 'More body.']);
+  });
+
   it('handles windows line endings and empty input', () => {
     expect(textToChapters('One.\r\n\r\nTwo.')[0]!.paragraphs).toEqual(['One.', 'Two.']);
     expect(textToChapters('')).toEqual([]);
