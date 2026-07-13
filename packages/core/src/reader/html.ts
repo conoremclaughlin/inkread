@@ -20,6 +20,8 @@ export interface ReaderSettings {
   theme: ReaderTheme;
   /** Base font size in px. */
   fontSize: number;
+  /** 'scroll' (default): vertical chapter scroll. 'paged': page-flip via columns. */
+  pagination?: 'scroll' | 'paged';
 }
 
 const THEMES: Record<ReaderTheme, { bg: string; fg: string; accent: string; hlAlpha: string }> = {
@@ -103,6 +105,8 @@ export function buildReaderHtml(
     .map(([name, rgb]) => `.sel-${name} { background: rgba(${rgb}, ${theme.hlAlpha}); }`)
     .join('\n');
 
+  const paged = settings.pagination === 'paged';
+
   return `<!DOCTYPE html>
 <html>
 <head>
@@ -117,8 +121,22 @@ export function buildReaderHtml(
     font-size: ${settings.fontSize}px;
     line-height: 1.65;
     margin: 0;
-    padding: 18px 20px 120px;
+    padding: ${paged ? '0' : '18px 20px 120px'};
     -webkit-tap-highlight-color: transparent;
+    ${paged ? 'overflow: hidden; height: 100vh;' : ''}
+  }
+  ${
+    paged
+      ? `#content {
+    box-sizing: border-box;
+    height: calc(100vh - 76px);
+    margin: 44px 44px 32px;
+    column-width: calc(100vw - 88px);
+    column-gap: 88px;
+    column-fill: auto;
+    overflow: hidden;
+  }`
+      : ''
   }
   h1 { font-size: 1.45em; line-height: 1.25; margin: 0.5em 0 1em; }
   p { margin: 0 0 0.85em; text-align: justify; -webkit-hyphens: auto; hyphens: auto; }
@@ -129,9 +147,11 @@ export function buildReaderHtml(
   ${colorCss}
 </style>
 </head>
-<body>
+<body${paged ? ' class="paged"' : ''}>
+<div id="content">
 <h1>${escapeHtml(chapter.title)}</h1>
 ${paragraphsHtml}
+</div>
 <script>
 (function () {
   // Host bridge: React Native WebView on mobile, parent iframe on web.
@@ -173,26 +193,65 @@ ${paragraphsHtml}
     }
   });
 
+  var PAGED = ${paged ? 'true' : 'false'};
+  var content = document.getElementById('content');
+
+  function pageWidth() { return content.clientWidth + 88; }
+
+  function reportPosition() {
+    var paragraphs = document.querySelectorAll('p[data-po]');
+    for (var i = 0; i < paragraphs.length; i++) {
+      var rect = paragraphs[i].getBoundingClientRect();
+      var visible = PAGED
+        ? rect.right > 44 && rect.left < window.innerWidth
+        : rect.bottom > 10;
+      if (visible) {
+        post({ type: 'scroll', offset: parseInt(paragraphs[i].getAttribute('data-po'), 10) });
+        return;
+      }
+    }
+  }
+
+  function turnPage(delta) {
+    var target = content.scrollLeft + delta * pageWidth();
+    if (target < -1) { post({ type: 'pageEdge', dir: 'prev' }); return; }
+    if (target > content.scrollWidth - content.clientWidth + 1) {
+      post({ type: 'pageEdge', dir: 'next' });
+      return;
+    }
+    content.scrollTo({ left: Math.round(target / pageWidth()) * pageWidth(), behavior: 'smooth' });
+    setTimeout(reportPosition, 350);
+  }
+
   document.addEventListener('click', function (event) {
     var hl = event.target.closest ? event.target.closest('[data-hl]') : null;
     if (hl) { post({ type: 'tapHighlight', id: hl.getAttribute('data-hl') }); return; }
+    var sel = window.getSelection();
+    if (sel && !sel.isCollapsed) return;
+    if (PAGED) {
+      var x = event.clientX / window.innerWidth;
+      if (x < 0.18) { turnPage(-1); return; }
+      if (x > 0.82) { turnPage(1); return; }
+    }
     post({ type: 'tap' });
   });
 
-  var scrollTimer = null;
-  window.addEventListener('scroll', function () {
-    if (scrollTimer) clearTimeout(scrollTimer);
-    scrollTimer = setTimeout(function () {
-      var paragraphs = document.querySelectorAll('p[data-po]');
-      for (var i = 0; i < paragraphs.length; i++) {
-        var rect = paragraphs[i].getBoundingClientRect();
-        if (rect.bottom > 10) {
-          post({ type: 'scroll', offset: parseInt(paragraphs[i].getAttribute('data-po'), 10) });
-          return;
-        }
-      }
-    }, 250);
-  });
+  if (PAGED) {
+    document.addEventListener('keydown', function (event) {
+      if (event.key === 'ArrowRight' || event.key === ' ') { event.preventDefault(); turnPage(1); }
+      if (event.key === 'ArrowLeft') { event.preventDefault(); turnPage(-1); }
+    });
+    // Snap back to a page boundary when the window resizes.
+    window.addEventListener('resize', function () {
+      content.scrollTo({ left: Math.round(content.scrollLeft / pageWidth()) * pageWidth() });
+    });
+  } else {
+    var scrollTimer = null;
+    window.addEventListener('scroll', function () {
+      if (scrollTimer) clearTimeout(scrollTimer);
+      scrollTimer = setTimeout(reportPosition, 250);
+    });
+  }
 
   function resolveOffset(target) {
     var paragraphs = document.querySelectorAll('p[data-po]');
@@ -212,14 +271,28 @@ ${paragraphsHtml}
     return { node: best, offset: 0, element: true };
   }
 
+  function bringIntoView(el, smooth) {
+    if (!el) return;
+    if (PAGED) {
+      var left = content.scrollLeft + el.getBoundingClientRect().left - 44;
+      content.scrollTo({
+        left: Math.max(0, Math.floor(left / pageWidth()) * pageWidth()),
+        behavior: smooth ? 'smooth' : 'auto',
+      });
+      setTimeout(reportPosition, smooth ? 350 : 0);
+    } else {
+      el.scrollIntoView({ block: smooth ? 'center' : 'start', behavior: smooth ? 'smooth' : 'auto' });
+      if (!smooth) window.scrollBy(0, -8);
+    }
+  }
+
   window.__reader = {
     scrollToOffset: function (target) {
       var pos = resolveOffset(target);
       if (!pos) return;
-      var el = pos.element ? pos.node : pos.node.parentElement;
-      if (el && el.scrollIntoView) el.scrollIntoView({ block: 'start' });
-      window.scrollBy(0, -8);
+      bringIntoView(pos.element ? pos.node : pos.node.parentElement, false);
     },
+    turnPage: function (delta) { if (PAGED) turnPage(delta); },
     markSentence: function (start, end) {
       this.clearSentence();
       var from = resolveOffset(start);
@@ -232,7 +305,7 @@ ${paragraphsHtml}
         var mark = document.createElement('span');
         mark.className = 'tts-mark';
         range.surroundContents(mark);
-        mark.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        bringIntoView(mark, true);
       } catch (e) { /* range crosses element boundaries; skip visual mark */ }
     },
     clearSentence: function () {

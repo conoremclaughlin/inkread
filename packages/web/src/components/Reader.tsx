@@ -28,11 +28,17 @@ interface Selection {
   text: string;
 }
 
-const THEME_CYCLE: ReaderTheme[] = ['light', 'sepia', 'dark'];
 const RATES = [0.9, 1.0, 1.15, 1.3, 1.5];
+
+const THEME_PREVIEWS: { key: ReaderTheme; label: string; bg: string; fg: string }[] = [
+  { key: 'light', label: 'Light', bg: '#ffffff', fg: '#1a1a1a' },
+  { key: 'sepia', label: 'Sepia', bg: '#f5ecd9', fg: '#3a3226' },
+  { key: 'dark', label: 'Dark', bg: '#121212', fg: '#d8d4cd' },
+];
 
 type ReaderBridge = {
   scrollToOffset: (offset: number) => void;
+  turnPage: (delta: number) => void;
   markSentence: (start: number, end: number) => void;
   clearSentence: () => void;
 };
@@ -43,12 +49,19 @@ export function Reader({ book, chapters, initialAnnotations, initialPosition }: 
   );
   const [theme, setTheme] = useState<ReaderTheme>('sepia');
   const [fontSize, setFontSize] = useState(19);
+  const [pagination, setPagination] = useState<'scroll' | 'paged'>('scroll');
   const [annotations, setAnnotations] = useState(initialAnnotations);
   const [selection, setSelection] = useState<Selection>();
   const [tocOpen, setTocOpen] = useState(false);
+  const [themeOpen, setThemeOpen] = useState(false);
   const [ttsOpen, setTtsOpen] = useState(false);
   const [ttsPlaying, setTtsPlaying] = useState(false);
   const [rate, setRate] = useState(1.0);
+  const [isElectron, setIsElectron] = useState(false);
+
+  useEffect(() => {
+    setIsElectron(navigator.userAgent.includes('Electron'));
+  }, []);
 
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const offsetRef = useRef(initialPosition?.offset ?? 0);
@@ -62,8 +75,9 @@ export function Reader({ book, chapters, initialAnnotations, initialPosition }: 
     [annotations, chapterIndex],
   );
   const html = useMemo(
-    () => (chapter ? buildReaderHtml(chapter, chapterAnnotations, { theme, fontSize }) : ''),
-    [chapter, chapterAnnotations, theme, fontSize],
+    () =>
+      chapter ? buildReaderHtml(chapter, chapterAnnotations, { theme, fontSize, pagination }) : '',
+    [chapter, chapterAnnotations, theme, fontSize, pagination],
   );
 
   const bridge = useCallback((): ReaderBridge | undefined => {
@@ -130,11 +144,29 @@ export function Reader({ book, chapters, initialAnnotations, initialPosition }: 
           }
           break;
         }
+        case 'pageEdge':
+          setChapterIndex((index) => {
+            if (msg.dir === 'next' && index + 1 < chapters.length) {
+              offsetRef.current = 0;
+              return index + 1;
+            }
+            if (msg.dir === 'prev' && index > 0) {
+              // Land on the last page of the previous chapter.
+              offsetRef.current = Number.MAX_SAFE_INTEGER;
+              return index - 1;
+            }
+            return index;
+          });
+          break;
+        case 'tap':
+          setTocOpen(false);
+          setThemeOpen(false);
+          break;
       }
     };
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
-  }, [annotations, bridge, reloadAnnotations, savePosition]);
+  }, [annotations, bridge, chapters.length, reloadAnnotations, savePosition]);
 
   // TTS wiring.
   useEffect(() => {
@@ -227,22 +259,30 @@ export function Reader({ book, chapters, initialAnnotations, initialPosition }: 
 
   return (
     <div className="flex h-screen flex-col">
-      <header className="flex items-center justify-between border-b border-[#e6dfd4] bg-[#faf7f2] px-4 py-2 text-sm">
-        <div className="flex items-center gap-4">
-          <Link href="/" className="font-medium text-[#8b5e3c]">
+      <header
+        className={`flex items-center justify-between border-b border-[#e6dfd4] bg-[#faf7f2] px-4 py-2 text-sm ${
+          isElectron ? 'electron-drag pl-20 pt-3' : ''
+        }`}
+      >
+        <div className="flex min-w-0 items-center gap-4">
+          <Link href="/" className="electron-no-drag shrink-0 font-medium text-[#8b5e3c]">
             ← Library
           </Link>
-          <span className="max-w-[40ch] truncate font-semibold">{book.title}</span>
+          <span className="truncate font-semibold">{book.title}</span>
         </div>
-        <div className="flex items-center gap-4">
-          <button onClick={() => setTocOpen((v) => !v)} className="text-[#8b5e3c]">
+        <div className="electron-no-drag flex shrink-0 items-center gap-4">
+          <button onClick={() => { setThemeOpen(false); setTocOpen((v) => !v); }} className="text-[#8b5e3c]">
             Chapters
           </button>
-          <button
-            onClick={() => setTheme(THEME_CYCLE[(THEME_CYCLE.indexOf(theme) + 1) % 3]!)}
-            className="text-[#8b5e3c]"
-          >
+          <button onClick={() => { setTocOpen(false); setThemeOpen((v) => !v); }} className="text-[#8b5e3c]">
             Theme
+          </button>
+          <button
+            onClick={() => setPagination((p) => (p === 'scroll' ? 'paged' : 'scroll'))}
+            className="text-[#8b5e3c]"
+            title={pagination === 'scroll' ? 'Switch to page flipping' : 'Switch to scrolling'}
+          >
+            {pagination === 'scroll' ? 'Pages' : 'Scroll'}
           </button>
           <button onClick={() => setFontSize((s) => Math.max(14, s - 1))} className="text-[#8b5e3c]">
             A-
@@ -268,8 +308,19 @@ export function Reader({ book, chapters, initialAnnotations, initialPosition }: 
           title={chapter.title}
         />
 
+        {tocOpen || themeOpen ? (
+          <button
+            aria-label="Close menu"
+            className="absolute inset-0 z-10 cursor-default"
+            onClick={() => {
+              setTocOpen(false);
+              setThemeOpen(false);
+            }}
+          />
+        ) : null}
+
         {tocOpen ? (
-          <nav className="absolute right-4 top-2 z-10 max-h-[70%] w-72 overflow-auto rounded-xl border border-[#e6dfd4] bg-white p-2 shadow-lg">
+          <nav className="absolute right-4 top-2 z-20 max-h-[70%] w-72 overflow-auto rounded-xl border border-[#e6dfd4] bg-white p-2 shadow-lg">
             {chapters.map((c, i) => (
               <button
                 key={i}
@@ -282,6 +333,33 @@ export function Reader({ book, chapters, initialAnnotations, initialPosition }: 
               </button>
             ))}
           </nav>
+        ) : null}
+
+        {themeOpen ? (
+          <div className="absolute right-4 top-2 z-20 w-56 rounded-xl border border-[#e6dfd4] bg-white p-2 shadow-lg">
+            {THEME_PREVIEWS.map((preview) => (
+              <button
+                key={preview.key}
+                onClick={() => {
+                  setTheme(preview.key);
+                  setThemeOpen(false);
+                }}
+                className={`mb-1 flex w-full items-center gap-3 rounded-lg border px-3 py-2 text-left text-sm transition hover:border-[#8b5e3c] ${
+                  theme === preview.key ? 'border-[#8b5e3c]' : 'border-transparent'
+                }`}
+              >
+                <span
+                  className="flex h-9 w-14 shrink-0 items-center justify-center rounded-md border border-black/10 font-serif text-xs"
+                  style={{ background: preview.bg, color: preview.fg }}
+                >
+                  Aa
+                </span>
+                <span className={theme === preview.key ? 'font-bold text-[#8b5e3c]' : ''}>
+                  {preview.label}
+                </span>
+              </button>
+            ))}
+          </div>
         ) : null}
 
         {selection ? (
