@@ -18,3 +18,4 @@ export {
 } from './reader/html';
 export { splitSentences, type Sentence } from './tts/sentences';
 export { textToChapters, type TextToChaptersOptions } from './text/segment';
+export { cleanGoogleDocText, googleDocToChapters } from './importers/googleDoc';

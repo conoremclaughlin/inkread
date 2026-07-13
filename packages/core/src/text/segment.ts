@@ -19,6 +19,13 @@ export interface TextToChaptersOptions {
    * or curated sources where shouty prose would misfire.
    */
   headings?: 'auto' | 'markdown';
+  /**
+   * 'blank-line' (default): blank lines separate paragraphs and single
+   * newlines are soft wraps. 'every-line': each non-empty line is its own
+   * paragraph — right for sources that never soft-wrap (Google Docs
+   * plain-text exports, chat logs).
+   */
+  paragraphBreaks?: 'blank-line' | 'every-line';
 }
 
 function isHeadingBlock(lines: string[], mode: 'auto' | 'markdown'): boolean {
@@ -43,16 +50,23 @@ export function textToChapters(
   options?: TextToChaptersOptions,
 ): Chapter[] {
   const mode = options?.headings ?? 'auto';
-  const blocks = text
-    .replace(/\r\n?/g, '\n')
-    .split(/\n\s*\n+/)
-    .map((block) =>
-      block
-        .split('\n')
-        .map((line) => line.trim())
-        .filter((line) => line.length > 0),
-    )
-    .filter((lines) => lines.length > 0);
+  const normalized = text.replace(/\r\n?/g, '\n');
+  const blocks =
+    options?.paragraphBreaks === 'every-line'
+      ? normalized
+          .split('\n')
+          .map((line) => line.trim())
+          .filter((line) => line.length > 0)
+          .map((line) => [line])
+      : normalized
+          .split(/\n\s*\n+/)
+          .map((block) =>
+            block
+              .split('\n')
+              .map((line) => line.trim())
+              .filter((line) => line.length > 0),
+          )
+          .filter((lines) => lines.length > 0);
 
   const chapters: Chapter[] = [];
   let current: { title: string; paragraphs: string[] } | undefined;

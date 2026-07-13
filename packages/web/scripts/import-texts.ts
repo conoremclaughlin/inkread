@@ -1,17 +1,32 @@
 /**
  * Batch-import .txt / .md files into an inkread library through the API.
  *
- *   yarn workspace @inkread/web import:texts <directory> [--api http://127.0.0.1:6021]
+ *   yarn workspace @inkread/web import:texts <directory> \
+ *     [--api http://127.0.0.1:6021] [--importer text|gdoc] [--headings auto|markdown]
  *
  * Auth: INKREAD_EMAIL + INKREAD_PASSWORD env vars (a user on the target
  * stack); SUPABASE_URL/SUPABASE_PUBLISHABLE_KEY are read from .env.local.
- * Each file becomes one book: filename → title, markdown/ALL-CAPS/"Chapter"
- * headings → chapter breaks.
+ * Each file becomes one book: filename → title. Importers own the
+ * source-specific parsing: 'text' (default) for generic prose/markdown,
+ * 'gdoc' for Google Docs plain-text exports (strips BOM + comment
+ * markers, one paragraph per line).
  */
 import { readdirSync, readFileSync, existsSync } from 'node:fs';
 import { basename, extname, join, resolve } from 'node:path';
 import { createClient } from '@supabase/supabase-js';
-import { textToChapters, type TextToChaptersOptions } from '@inkread/core';
+import {
+  googleDocToChapters,
+  textToChapters,
+  type Chapter,
+  type TextToChaptersOptions,
+} from '@inkread/core';
+
+type Importer = (raw: string, title: string, options?: TextToChaptersOptions) => Chapter[];
+
+const IMPORTERS: Record<string, Importer> = {
+  text: (raw, title, options) => textToChapters(raw, title, options),
+  gdoc: (raw, title, options) => googleDocToChapters(raw, title, options),
+};
 
 function loadDotEnvLocal(): void {
   const path = resolve(import.meta.dirname, '../.env.local');
@@ -27,11 +42,21 @@ async function main(): Promise<void> {
   const args = process.argv.slice(2);
   const apiFlag = args.indexOf('--api');
   const headingsFlag = args.indexOf('--headings');
-  const headings = (headingsFlag >= 0 ? args[headingsFlag + 1] : 'auto') as NonNullable<
-    TextToChaptersOptions['headings']
-  >;
+  const importerFlag = args.indexOf('--importer');
+  const headings =
+    headingsFlag >= 0
+      ? (args[headingsFlag + 1] as NonNullable<TextToChaptersOptions['headings']>)
+      : undefined;
+  const importerName = importerFlag >= 0 ? args[importerFlag + 1]! : 'text';
+  const importer = IMPORTERS[importerName];
+  if (!importer) {
+    console.error(`Unknown importer '${importerName}' (available: ${Object.keys(IMPORTERS).join(', ')})`);
+    process.exit(1);
+  }
   const apiUrl = apiFlag >= 0 ? args[apiFlag + 1]! : (process.env.APP_URL ?? 'http://127.0.0.1:6021');
-  const flagValueIndexes = new Set([apiFlag, headingsFlag].filter((i) => i >= 0).map((i) => i + 1));
+  const flagValueIndexes = new Set(
+    [apiFlag, headingsFlag, importerFlag].filter((i) => i >= 0).map((i) => i + 1),
+  );
   const directory = args.filter((a, i) => !a.startsWith('--') && !flagValueIndexes.has(i))[0];
 
   const email = process.env.INKREAD_EMAIL;
@@ -68,7 +93,7 @@ async function main(): Promise<void> {
   for (const file of files) {
     const raw = readFileSync(join(directory, file), 'utf8');
     const title = basename(file, extname(file)).replace(/[-_]+/g, ' ').trim();
-    const chapters = textToChapters(raw, title, { headings });
+    const chapters = importer(raw, title, headings ? { headings } : undefined);
     if (chapters.length === 0) {
       console.warn(`skip  ${file} (no readable text)`);
       continue;

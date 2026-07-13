@@ -24,24 +24,26 @@ export default async function NotesPage({ params }: { params: Promise<{ bookId: 
   }
 
   return (
-    <main className="mx-auto max-w-3xl px-6 py-10">
-      <header className="flex items-center justify-between">
-        <div>
+    <main className="mx-auto flex min-h-screen max-w-3xl flex-col px-6 py-10">
+      <header className="flex flex-wrap items-end justify-between gap-4">
+        <div className="min-w-0">
           <Link href={`/read/${bookId}`} className="text-sm font-medium text-[#8b5e3c]">
             ← Back to book
           </Link>
-          <h1 className="mt-1 font-serif text-2xl">Notes · {book.title}</h1>
+          <h1 className="mt-1 truncate font-serif text-2xl" title={book.title}>
+            Notes · {book.title}
+          </h1>
         </div>
-        <div className="flex gap-3 text-sm">
+        <div className="flex shrink-0 gap-3 text-sm">
           <a
             href={`/api/books/${bookId}/export?format=markdown`}
-            className="rounded-full bg-[#8b5e3c] px-4 py-2 font-semibold text-white"
+            className="whitespace-nowrap rounded-full bg-[#8b5e3c] px-4 py-2 font-semibold text-white transition hover:bg-[#75492c]"
           >
             Export Markdown
           </a>
           <a
             href={`/api/books/${bookId}/export?format=epub`}
-            className="rounded-full border border-[#8b5e3c] px-4 py-2 font-semibold text-[#8b5e3c]"
+            className="whitespace-nowrap rounded-full border border-[#8b5e3c] px-4 py-2 font-semibold text-[#8b5e3c] transition hover:bg-[#f0e6da]"
           >
             Download EPUB
           </a>
@@ -49,9 +51,19 @@ export default async function NotesPage({ params }: { params: Promise<{ bookId: 
       </header>
 
       {annotations.length === 0 ? (
-        <p className="mt-16 text-center text-[#6b6459]">
-          No notes yet — select any passage while reading to highlight it or attach a note.
-        </p>
+        <div className="flex flex-1 flex-col items-center justify-center pb-24 text-center">
+          <p className="font-serif text-xl text-[#26221c]">No notes yet</p>
+          <p className="mx-auto mt-2 max-w-md text-[#6b6459]">
+            Select any passage while reading to highlight it or attach a note — everything you
+            save collects here, ready to export.
+          </p>
+          <Link
+            href={`/read/${bookId}`}
+            className="mt-6 rounded-full border border-[#8b5e3c] px-5 py-2 text-sm font-semibold text-[#8b5e3c] transition hover:bg-[#f0e6da]"
+          >
+            Open the book →
+          </Link>
+        </div>
       ) : (
         [...byChapter.entries()]
           .sort((a, b) => a[0] - b[0])
