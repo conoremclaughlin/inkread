@@ -7,7 +7,7 @@ const BOOK = {
   title: 'Test Book',
   author: 'An Author',
   language: 'en',
-  source: 'text',
+  source: 'text' as const,
   chapterCount: 2,
   createdAt: '2026-07-01T00:00:00Z',
   updatedAt: '2026-07-02T00:00:00Z',
