@@ -85,6 +85,9 @@ export function BookActions({ bookId, title }: { bookId: string; title: string }
             <Link href={`/notes/${bookId}`} className={item}>
               Notes
             </Link>
+            <Link href={`/read/${bookId}?from=start`} className={item}>
+              Read from beginning
+            </Link>
             <button
               onClick={() => {
                 setOpen(false);

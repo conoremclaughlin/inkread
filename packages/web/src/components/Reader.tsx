@@ -29,6 +29,8 @@ interface ReaderProps {
   initialPreferences?: ReaderPreferences;
   /** Reading from the device cache; server writes are skipped. */
   offline?: boolean;
+  /** Re-reading from the start — don't move the saved bookmark. */
+  browseOnly?: boolean;
 }
 
 interface Selection {
@@ -84,6 +86,7 @@ export function Reader({
   initialPosition,
   initialPreferences,
   offline,
+  browseOnly,
 }: ReaderProps) {
   const [chapterIndex, setChapterIndex] = useState(
     Math.min(initialPosition?.chapterIndex ?? 0, chapters.length - 1),
@@ -219,6 +222,7 @@ export function Reader({
     (offset: number) => {
       offsetRef.current = offset;
       if (saveTimer.current) clearTimeout(saveTimer.current);
+      if (browseOnly) return;
       saveTimer.current = setTimeout(() => {
         void fetch(`/api/books/${book.id}/position`, {
           method: 'PUT',
@@ -326,14 +330,12 @@ export function Reader({
     [book.id, chapter, chapterIndex, reloadAnnotations, selection],
   );
 
+  const [copied, setCopied] = useState(false);
   const sharePassage = useCallback(async () => {
     if (!selection) return;
-    const text = formatPassageShare(book, selection.text);
-    if (navigator.share) await navigator.share({ text });
-    else {
-      await navigator.clipboard.writeText(text);
-      alert('Passage copied to clipboard.');
-    }
+    await navigator.clipboard.writeText(formatPassageShare(book, selection.text));
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1200);
   }, [book, selection]);
 
   const goToChapter = useCallback((index: number) => {
@@ -588,21 +590,21 @@ export function Reader({
                 key={color}
                 aria-label={`Highlight ${color}`}
                 onClick={() => void addHighlight(color)}
-                className="h-5 w-5 rounded-full"
+                className="h-5 w-5 rounded-full ring-[#26221c]/25 ring-offset-1 transition hover:scale-110 hover:ring-2"
                 style={{ background: `rgb(${HIGHLIGHT_COLORS[color]})` }}
               />
             ))}
             <button
               onClick={() => setNoteDraft('')}
-              className="px-1 py-1 text-sm font-semibold text-[#8b5e3c]"
+              className="rounded-lg px-2 py-1 text-sm font-semibold text-[#8b5e3c] transition hover:bg-[#f0e6da]"
             >
               Note
             </button>
             <button
               onClick={() => void sharePassage()}
-              className="px-1 py-1 text-sm font-semibold text-[#8b5e3c]"
+              className="rounded-lg px-2 py-1 text-sm font-semibold text-[#8b5e3c] transition hover:bg-[#f0e6da]"
             >
-              Share
+              {copied ? 'Copied ✓' : 'Copy'}
             </button>
           </div>
         ) : null}
@@ -691,8 +693,10 @@ export function Reader({
 
       <footer className="flex h-10 shrink-0 items-stretch justify-between px-2 text-sm">
         <button
-          disabled={chapterIndex === 0}
-          onClick={() => goToChapter(chapterIndex - 1)}
+          disabled={pagination === 'scroll' && chapterIndex === 0}
+          onClick={() =>
+            pagination === 'paged' ? bridge()?.turnPage(-1) : goToChapter(chapterIndex - 1)
+          }
           className="flex items-center px-3 opacity-55 transition hover:opacity-100 disabled:opacity-20"
         >
           ‹ Prev
@@ -701,8 +705,10 @@ export function Reader({
           {chapterIndex + 1} / {chapters.length} · {chapter.title}
         </span>
         <button
-          disabled={chapterIndex >= chapters.length - 1}
-          onClick={() => goToChapter(chapterIndex + 1)}
+          disabled={pagination === 'scroll' && chapterIndex >= chapters.length - 1}
+          onClick={() =>
+            pagination === 'paged' ? bridge()?.turnPage(1) : goToChapter(chapterIndex + 1)
+          }
           className="flex items-center px-3 opacity-55 transition hover:opacity-100 disabled:opacity-20"
         >
           Next ›

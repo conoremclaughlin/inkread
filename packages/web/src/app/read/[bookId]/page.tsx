@@ -3,8 +3,16 @@ import { getRepository } from '@/lib/data';
 import { Reader } from '@/components/Reader';
 import { LocalReadFallback } from '@/components/LocalFallback';
 
-export default async function ReadPage({ params }: { params: Promise<{ bookId: string }> }) {
+export default async function ReadPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ bookId: string }>;
+  searchParams: Promise<{ from?: string }>;
+}) {
   const { bookId } = await params;
+  // ?from=start: read from the beginning without moving the saved bookmark.
+  const fromStart = (await searchParams).from === 'start';
 
   try {
     const repository = await getRepository();
@@ -24,8 +32,9 @@ export default async function ReadPage({ params }: { params: Promise<{ bookId: s
         book={book}
         chapters={chapters}
         initialAnnotations={annotations}
-        initialPosition={position ?? null}
+        initialPosition={fromStart ? null : (position ?? null)}
         initialPreferences={preferences}
+        browseOnly={fromStart}
       />
     );
   } catch (error) {

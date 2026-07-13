@@ -7,9 +7,19 @@ import { LocalLibraryFallback } from '@/components/LocalFallback';
 
 export default async function LibraryPage() {
   let books;
+  let progress: Map<string, number>;
   try {
     const repository = await getRepository();
     books = await repository.listBooks();
+    progress = new Map(
+      await Promise.all(
+        books.map(async (book): Promise<[string, number]> => {
+          const position = await repository.getPosition(book.id);
+          if (!position || book.chapterCount === 0) return [book.id, 0];
+          return [book.id, Math.round(((position.chapterIndex + 1) / book.chapterCount) * 100)];
+        }),
+      ),
+    );
   } catch {
     // Data layer unreachable — show the on-device library.
     return <LocalLibraryFallback />;
@@ -22,7 +32,7 @@ export default async function LibraryPage() {
         <div className="flex items-center gap-3">
           <ImportPdf />
           <form action={signOut}>
-            <button className="px-2 py-2 text-sm text-[#6b6459] hover:text-[#26221c]">
+            <button className="rounded-full px-4 py-2.5 text-sm text-[#6b6459] transition hover:bg-[#f0e6da] hover:text-[#26221c]">
               Log out
             </button>
           </form>
@@ -42,16 +52,22 @@ export default async function LibraryPage() {
           {books.map((book) => (
             <li
               key={book.id}
-              className="group flex overflow-hidden rounded-xl border border-[#e6dfd4] bg-white"
+              className="group flex rounded-xl border border-[#e6dfd4] bg-white"
             >
-              <div className="w-1.5 shrink-0 bg-[#8b5e3c]" />
-              <Link href={`/read/${book.id}`} className="flex-1 p-4 hover:bg-[#faf7f2]">
+              <div className="w-1.5 shrink-0 rounded-l-xl bg-[#8b5e3c]" />
+              <Link href={`/read/${book.id}`} className="flex-1 p-4 transition hover:bg-[#faf7f2]">
                 <div className="font-semibold">{book.title}</div>
                 {book.author ? <div className="text-sm text-[#6b6459]">{book.author}</div> : null}
-                <div className="mt-1 text-xs text-[#6b6459]">{book.chapterCount} chapters</div>
+                <div className="mt-1 text-xs text-[#6b6459]">
+                  {book.chapterCount} chapters
+                  {(progress.get(book.id) ?? 0) > 0 ? ` · ${progress.get(book.id)}% read` : ''}
+                </div>
               </Link>
               <div className="flex items-center gap-1 px-3 text-sm">
-                <Link href={`/notes/${book.id}`} className="px-2 py-2 font-medium text-[#8b5e3c]">
+                <Link
+                  href={`/notes/${book.id}`}
+                  className="rounded-lg px-3 py-2 font-medium text-[#8b5e3c] transition hover:bg-[#f0e6da]"
+                >
                   Notes
                 </Link>
                 <BookActions bookId={book.id} title={book.title} />

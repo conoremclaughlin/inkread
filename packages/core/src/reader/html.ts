@@ -247,6 +247,26 @@ ${paragraphsHtml}
     }
   }
 
+  // Kobo-quick page turns: native smooth scrolling is ~400ms and not
+  // tunable, so animate scrollLeft ourselves with a short ease-out.
+  var turnAnimation = null;
+  function animateScrollTo(left, duration) {
+    if (turnAnimation) cancelAnimationFrame(turnAnimation);
+    var from = content.scrollLeft;
+    var change = left - from;
+    if (change === 0) return;
+    var start = null;
+    function step(now) {
+      if (start === null) start = now;
+      var t = Math.min(1, (now - start) / duration);
+      var eased = 1 - Math.pow(1 - t, 3);
+      content.scrollLeft = from + change * eased;
+      if (t < 1) turnAnimation = requestAnimationFrame(step);
+      else { turnAnimation = null; reportPosition(); }
+    }
+    turnAnimation = requestAnimationFrame(step);
+  }
+
   function turnPage(delta) {
     var target = content.scrollLeft + delta * pageWidth();
     if (target < -1) { post({ type: 'pageEdge', dir: 'prev' }); return; }
@@ -254,8 +274,7 @@ ${paragraphsHtml}
       post({ type: 'pageEdge', dir: 'next' });
       return;
     }
-    content.scrollTo({ left: Math.round(target / pageWidth()) * pageWidth(), behavior: 'smooth' });
-    setTimeout(reportPosition, 350);
+    animateScrollTo(Math.round(target / pageWidth()) * pageWidth(), 180);
   }
 
   document.addEventListener('click', function (event) {
@@ -310,11 +329,9 @@ ${paragraphsHtml}
     if (!el) return;
     if (PAGED) {
       var left = content.scrollLeft + el.getBoundingClientRect().left - 44;
-      content.scrollTo({
-        left: Math.max(0, Math.floor(left / pageWidth()) * pageWidth()),
-        behavior: smooth ? 'smooth' : 'auto',
-      });
-      setTimeout(reportPosition, smooth ? 350 : 0);
+      var page = Math.max(0, Math.floor(left / pageWidth()) * pageWidth());
+      if (smooth) animateScrollTo(page, 180);
+      else { content.scrollLeft = page; reportPosition(); }
     } else {
       el.scrollIntoView({ block: smooth ? 'center' : 'start', behavior: smooth ? 'smooth' : 'auto' });
       if (!smooth) window.scrollBy(0, -8);
