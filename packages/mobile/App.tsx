@@ -1,8 +1,12 @@
+import { useEffect, useState } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { StatusBar } from 'expo-status-bar';
 import type { RootStackParamList } from './src/navigation';
+import { loadSession } from './src/lib/api';
+import { syncNow } from './src/lib/sync';
 import { LibraryScreen } from './src/screens/LibraryScreen';
+import { LoginScreen } from './src/screens/LoginScreen';
 import { NotesScreen } from './src/screens/NotesScreen';
 import { ReaderScreen } from './src/screens/ReaderScreen';
 import { colors } from './src/ui/theme';
@@ -10,6 +14,25 @@ import { colors } from './src/ui/theme';
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
 export default function App() {
+  const [authed, setAuthed] = useState<boolean>();
+
+  useEffect(() => {
+    void loadSession().then((ok) => {
+      setAuthed(ok);
+      if (ok) void syncNow().catch(() => undefined);
+    });
+  }, []);
+
+  if (authed === undefined) return null;
+  if (!authed) {
+    return (
+      <>
+        <StatusBar style="dark" />
+        <LoginScreen onLoggedIn={() => setAuthed(true)} />
+      </>
+    );
+  }
+
   return (
     <NavigationContainer>
       <StatusBar style="dark" />

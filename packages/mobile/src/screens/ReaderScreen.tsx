@@ -18,20 +18,16 @@ import {
   type HighlightColor,
 } from '@inkread/core';
 import type { RootStackParamList } from '../navigation';
-import { AUTODEMO } from '../dev/autodemo';
-import { exportAnnotationsMarkdown } from '@inkread/core';
-import { newId } from '../lib/id';
 import { buildReaderHtml, HIGHLIGHT_COLORS, type ReaderTheme } from '@inkread/core';
 import {
+  createAnnotation,
   deleteAnnotation,
-  getBook,
-  getPosition,
-  insertAnnotation,
-  listAnnotations,
-  savePosition,
+  loadBook,
+  persistPosition,
+  refreshAnnotations,
   updateAnnotationNote,
-} from '../store/db';
-import { readChapters } from '../store/files';
+  type LoadedBook,
+} from '../lib/libraryData';
 import { TtsController, pickBestVoice } from '../tts/TtsController';
 import { colors } from '../ui/theme';
 
@@ -45,18 +41,33 @@ interface Selection {
 
 const THEME_CYCLE: ReaderTheme[] = ['light', 'sepia', 'dark'];
 
-export function ReaderScreen({ route, navigation }: Props) {
+export function ReaderScreen(props: Props) {
+  const { bookId } = props.route.params;
+  const [data, setData] = useState<LoadedBook | null | undefined>(undefined);
+  useEffect(() => {
+    void loadBook(bookId).then(setData);
+  }, [bookId]);
+  if (data === undefined) return <View style={styles.center} />;
+  if (data === null) {
+    return (
+      <View style={styles.center}>
+        <Text style={{ color: colors.inkSoft }}>Book not found on this device yet.</Text>
+      </View>
+    );
+  }
+  return <ReaderInner {...props} loaded={data} />;
+}
+
+function ReaderInner({ route, navigation, loaded }: Props & { loaded: LoadedBook }) {
   const { bookId } = route.params;
-  const book = useMemo(() => getBook(bookId), [bookId]);
-  const chapters = useMemo<Chapter[]>(() => readChapters(bookId), [bookId]);
-  const initialPosition = useMemo(() => getPosition(bookId), [bookId]);
+  const book = loaded.book;
+  const chapters = loaded.chapters;
+  const initialPosition = loaded.position;
 
   const [chapterIndex, setChapterIndex] = useState(initialPosition?.chapterIndex ?? 0);
   const [theme, setTheme] = useState<ReaderTheme>('sepia');
   const [fontSize, setFontSize] = useState(18);
-  const [annotations, setAnnotations] = useState<Annotation[]>(() =>
-    listAnnotations(bookId, initialPosition?.chapterIndex ?? 0),
-  );
+  const [annotations, setAnnotations] = useState<Annotation[]>(loaded.annotations);
   const [selection, setSelection] = useState<Selection | undefined>();
   const [chromeVisible, setChromeVisible] = useState(true);
   const [tocVisible, setTocVisible] = useState(false);
@@ -78,10 +89,8 @@ export function ReaderScreen({ route, navigation }: Props) {
   );
 
   const reloadAnnotations = useCallback(() => {
-    setAnnotations(listAnnotations(bookId, chapterIndex));
-  }, [bookId, chapterIndex]);
-
-  useEffect(reloadAnnotations, [reloadAnnotations]);
+    void refreshAnnotations(bookId).then(setAnnotations);
+  }, [bookId]);
 
   // --- TTS -----------------------------------------------------------------
   const getTts = useCallback((): TtsController => {
@@ -153,19 +162,18 @@ export function ReaderScreen({ route, navigation }: Props) {
   const addHighlight = useCallback(
     (color: HighlightColor, note?: string) => {
       if (!selection || !chapter) return;
-      insertAnnotation({
-        id: newId('ann'),
-        bookId,
-        kind: note ? 'note' : 'highlight',
-        locator: { chapterIndex, start: selection.start, end: selection.end },
+      setSelection(undefined);
+      void createAnnotation(bookId, {
+        chapterIndex,
+        start: selection.start,
+        end: selection.end,
         passage: selection.text,
         note,
         color,
         chapterTitle: chapter.title,
-        createdAt: new Date().toISOString(),
-      });
-      setSelection(undefined);
-      reloadAnnotations();
+      })
+        .then(reloadAnnotations)
+        .catch((error) => Alert.alert('Could not save', String(error.message ?? error)));
     },
     [bookId, chapter, chapterIndex, reloadAnnotations, selection],
   );
@@ -198,8 +206,9 @@ export function ReaderScreen({ route, navigation }: Props) {
             onPress: () =>
               Alert.prompt('Note', annotation.passage.slice(0, 120), (note) => {
                 if (note !== null) {
-                  updateAnnotationNote(id, note.trim() || undefined);
-                  reloadAnnotations();
+                  void updateAnnotationNote(id, note.trim() || undefined)
+                    .then(reloadAnnotations)
+                    .catch((error) => Alert.alert('Could not save', String(error.message ?? error)));
                 }
               }, 'plain-text', annotation.note),
           },
@@ -208,8 +217,9 @@ export function ReaderScreen({ route, navigation }: Props) {
             text: 'Remove',
             style: 'destructive',
             onPress: () => {
-              deleteAnnotation(id);
-              reloadAnnotations();
+              void deleteAnnotation(id)
+                .then(reloadAnnotations)
+                .catch((error) => Alert.alert('Could not delete', String(error.message ?? error)));
             },
           },
           { text: 'Cancel', style: 'cancel' },
@@ -250,12 +260,7 @@ export function ReaderScreen({ route, navigation }: Props) {
         case 'scroll': {
           const offset = Number(msg.offset) || 0;
           restoreOffsetRef.current = offset;
-          savePosition({
-            bookId,
-            chapterIndex,
-            offset,
-            updatedAt: new Date().toISOString(),
-          });
+          void persistPosition({ bookId, chapterIndex, offset });
           break;
         }
         case 'tapHighlight':
@@ -268,43 +273,6 @@ export function ReaderScreen({ route, navigation }: Props) {
     },
     [bookId, chapterIndex, handleTapHighlight],
   );
-
-  const autodemoRan = useRef(false);
-  useEffect(() => {
-    if (!__DEV__ || !AUTODEMO || autodemoRan.current || !book || !chapter) return;
-    autodemoRan.current = true;
-    const timer = setTimeout(() => {
-      const end = Math.max(chapterText.indexOf('.') + 1, 40);
-      console.log('[autodemo] inserting highlight + note on first sentence');
-      insertAnnotation({
-        id: newId('ann'),
-        bookId,
-        kind: 'note',
-        locator: { chapterIndex, start: 0, end },
-        passage: chapterText.slice(0, end),
-        note: 'Autodemo: what a great opening.',
-        color: 'green',
-        chapterTitle: chapter.title,
-        createdAt: new Date().toISOString(),
-      });
-      reloadAnnotations();
-      console.log(
-        '[autodemo] markdown export:\n' +
-          exportAnnotationsMarkdown(book, listAnnotations(bookId)),
-      );
-      setTimeout(() => {
-        console.log('[autodemo] starting TTS');
-        void openTts();
-        setTimeout(() => {
-          console.log('[autodemo] stopping TTS');
-          closeTts();
-          console.log('[autodemo] COMPLETE');
-        }, 12000);
-      }, 2000);
-    }, 2500);
-    return () => clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [book, chapter]);
 
   const goToChapter = useCallback((index: number) => {
     restoreOffsetRef.current = 0;
