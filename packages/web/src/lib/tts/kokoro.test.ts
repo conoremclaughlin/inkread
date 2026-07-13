@@ -123,16 +123,20 @@ describe('KokoroTtsController', () => {
     await expect(init).rejects.toThrow('no network');
   });
 
-  it('requests the current sentence plus prefetch on play', async () => {
+  it('warms the first sentence on load, then prefetches ahead on play', async () => {
     const controller = await readyController();
     controller.load(TEXT);
+    await tick();
+    // load() pre-synthesizes the current sentence so play starts instantly.
+    const warm = lastWorker().posted.filter((m) => m.type === 'generate');
+    expect(warm.map((m) => m.text)).toEqual(['First sentence.']);
     controller.play();
     await tick();
     const generates = lastWorker().posted.filter((m) => m.type === 'generate');
     expect(generates.map((m) => m.text)).toEqual([
+      'First sentence.',
       'Second sentence.',
       'Third sentence.',
-      'First sentence.',
     ]);
   });
 

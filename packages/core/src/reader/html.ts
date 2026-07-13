@@ -156,7 +156,7 @@ export function buildReaderHtml(
     font-size: ${settings.fontSize}px;
     line-height: 1.65;
     margin: 0;
-    padding: ${paged ? '0' : '18px 20px 120px'};
+    padding: ${paged ? '0' : '10px 20px 64px'};
     -webkit-tap-highlight-color: transparent;
     ${paged ? 'overflow: hidden; height: 100vh;' : ''}
   }
@@ -164,8 +164,8 @@ export function buildReaderHtml(
     paged
       ? `#content {
     box-sizing: border-box;
-    height: calc(100vh - 76px);
-    margin: 44px 44px 32px;
+    height: calc(100vh - 34px);
+    margin: 20px 44px 14px;
     column-width: calc(100vw - 88px);
     column-gap: 88px;
     column-fill: auto;
