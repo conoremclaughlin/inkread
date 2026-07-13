@@ -14,7 +14,21 @@ import type { Annotation, Chapter } from '../models/types';
  *   | __reader.clearSentence()
  */
 
-export type ReaderTheme = 'light' | 'sepia' | 'dark';
+/**
+ * Reading color schemes, tuned for long-form readability: warm off-whites
+ * over pure white to cut glare, ink colors at ~12:1 contrast rather than
+ * pure black, and desaturated light text on near-black for dark modes to
+ * avoid halation. 'light'/'dark' are aliases kept for older callers.
+ */
+export type ReaderTheme =
+  | 'paper'
+  | 'sepia'
+  | 'calm'
+  | 'quiet'
+  | 'night'
+  | 'midnight'
+  | 'light'
+  | 'dark';
 
 export interface ReaderSettings {
   theme: ReaderTheme;
@@ -24,11 +38,32 @@ export interface ReaderSettings {
   pagination?: 'scroll' | 'paged';
 }
 
-const THEMES: Record<ReaderTheme, { bg: string; fg: string; accent: string; hlAlpha: string }> = {
-  light: { bg: '#ffffff', fg: '#1a1a1a', accent: '#8b5e3c', hlAlpha: '0.35' },
+export interface ReaderThemeColors {
+  bg: string;
+  fg: string;
+  accent: string;
+  hlAlpha: string;
+}
+
+export const READER_THEMES: Record<ReaderTheme, ReaderThemeColors> = {
+  /** The inkread house palette — warm cream, matches the app chrome. */
+  paper: { bg: '#faf7f2', fg: '#26221c', accent: '#8b5e3c', hlAlpha: '0.38' },
+  /** Classic tanned-paper reading mode. */
   sepia: { bg: '#f5ecd9', fg: '#3a3226', accent: '#8b5e3c', hlAlpha: '0.4' },
+  /** Soft sage — low-glare green tint, easy on tired eyes. */
+  calm: { bg: '#edeee4', fg: '#333a2f', accent: '#5f7c4a', hlAlpha: '0.4' },
+  /** Neutral light gray, for those who find warm tints muddy. */
+  quiet: { bg: '#ececee', fg: '#2c2c31', accent: '#4a6d7c', hlAlpha: '0.38' },
+  /** Near-black with desaturated ivory text — reading in the dark. */
+  night: { bg: '#121212', fg: '#d8d4cd', accent: '#c9a227', hlAlpha: '0.45' },
+  /** Deep blue-black — dark without the void. */
+  midnight: { bg: '#12161f', fg: '#c9d0dc', accent: '#7d9cc0', hlAlpha: '0.45' },
+  // Aliases for callers predating the expanded set.
+  light: { bg: '#ffffff', fg: '#1a1a1a', accent: '#8b5e3c', hlAlpha: '0.35' },
   dark: { bg: '#121212', fg: '#d8d4cd', accent: '#c9a227', hlAlpha: '0.45' },
 };
+
+const THEMES = READER_THEMES;
 
 export const HIGHLIGHT_COLORS: Record<string, string> = {
   yellow: '255, 210, 60',

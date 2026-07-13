@@ -13,7 +13,9 @@ export { exportAnnotationsMarkdown, formatPassageShare } from './export/markdown
 export {
   buildReaderHtml,
   HIGHLIGHT_COLORS,
+  READER_THEMES,
   type ReaderTheme,
+  type ReaderThemeColors,
   type ReaderSettings,
 } from './reader/html';
 export { splitSentences, type Sentence } from './tts/sentences';

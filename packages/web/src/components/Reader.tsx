@@ -6,6 +6,7 @@ import {
   buildReaderHtml,
   formatPassageShare,
   HIGHLIGHT_COLORS,
+  READER_THEMES,
   type Annotation,
   type Chapter,
   type HighlightColor,
@@ -15,6 +16,7 @@ import {
 import type { BookSummary } from '@/lib/data/repository';
 import { WebTtsController } from '@/lib/tts';
 import { KokoroTtsController } from '@/lib/tts/kokoro';
+import { useIsElectron } from '@/lib/useIsElectron';
 
 type TtsPlayer = WebTtsController | KokoroTtsController;
 type TtsEngine = 'kokoro' | 'system';
@@ -33,12 +35,37 @@ interface Selection {
 }
 
 const RATES = [0.9, 1.0, 1.15, 1.3, 1.5];
+const DEFAULT_FONT_SIZE = 19;
 
-const THEME_PREVIEWS: { key: ReaderTheme; label: string; bg: string; fg: string }[] = [
-  { key: 'light', label: 'Light', bg: '#ffffff', fg: '#1a1a1a' },
-  { key: 'sepia', label: 'Sepia', bg: '#f5ecd9', fg: '#3a3226' },
-  { key: 'dark', label: 'Dark', bg: '#121212', fg: '#d8d4cd' },
-];
+const THEME_LABELS: Partial<Record<ReaderTheme, string>> = {
+  paper: 'Paper',
+  sepia: 'Sepia',
+  calm: 'Calm',
+  quiet: 'Quiet',
+  night: 'Night',
+  midnight: 'Midnight',
+};
+
+const THEME_PREVIEWS = (Object.keys(THEME_LABELS) as ReaderTheme[]).map((key) => ({
+  key,
+  label: THEME_LABELS[key]!,
+  bg: READER_THEMES[key].bg,
+  fg: READER_THEMES[key].fg,
+}));
+
+const PlayerIcon = ({ d, filled }: { d: string; filled?: boolean }) => (
+  <svg
+    viewBox="0 0 24 24"
+    className="h-5 w-5"
+    fill={filled ? 'currentColor' : 'none'}
+    stroke="currentColor"
+    strokeWidth={filled ? 0 : 2}
+    strokeLinejoin="round"
+    strokeLinecap="round"
+  >
+    <path d={d} />
+  </svg>
+);
 
 type ReaderBridge = {
   scrollToOffset: (offset: number) => void;
@@ -51,21 +78,20 @@ export function Reader({ book, chapters, initialAnnotations, initialPosition }: 
   const [chapterIndex, setChapterIndex] = useState(
     Math.min(initialPosition?.chapterIndex ?? 0, chapters.length - 1),
   );
-  const [theme, setTheme] = useState<ReaderTheme>('sepia');
-  const [fontSize, setFontSize] = useState(19);
+  const [theme, setTheme] = useState<ReaderTheme>('paper');
+  const [fontSize, setFontSize] = useState(DEFAULT_FONT_SIZE);
   const [pagination, setPagination] = useState<'scroll' | 'paged'>('scroll');
   const [annotations, setAnnotations] = useState(initialAnnotations);
   const [selection, setSelection] = useState<Selection>();
   const [tocOpen, setTocOpen] = useState(false);
   const [themeOpen, setThemeOpen] = useState(false);
+  const [layoutOpen, setLayoutOpen] = useState(false);
+  const [typeOpen, setTypeOpen] = useState(false);
+  const [noteDraft, setNoteDraft] = useState<string>();
   const [ttsOpen, setTtsOpen] = useState(false);
   const [ttsPlaying, setTtsPlaying] = useState(false);
   const [rate, setRate] = useState(1.0);
-  const [isElectron, setIsElectron] = useState(false);
-
-  useEffect(() => {
-    setIsElectron(navigator.userAgent.includes('Electron'));
-  }, []);
+  const isElectron = useIsElectron();
 
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const offsetRef = useRef(initialPosition?.offset ?? 0);
@@ -91,6 +117,8 @@ export function Reader({ book, chapters, initialAnnotations, initialPosition }: 
       ?.__reader;
   }, []);
 
+  const ttsContinueRef = useRef(false);
+
   const attachTtsListener = useCallback(
     (tts: TtsPlayer) => {
       tts.setListener((status) => {
@@ -98,23 +126,36 @@ export function Reader({ book, chapters, initialAnnotations, initialPosition }: 
         if (status.playing && status.sentence) {
           bridge()?.markSentence(status.sentence.start, status.sentence.end);
         }
-        if (status.playing && !status.sentence && status.finished) {
+        // Ran off the end of the chapter → flow into the next one; the
+        // chapter-change effect below reloads the queue and resumes.
+        if (!status.sentence && status.finished && status.totalSentences > 0) {
           setChapterIndex((index) => {
-            if (index + 1 < chapters.length) {
-              setTimeout(() => {
-                tts.load(chapters[index + 1]!.paragraphs.join('\n'), 0);
-                tts.play();
-              }, 300);
-              return index + 1;
-            }
-            tts.stop();
-            return index;
+            if (index + 1 >= chapters.length) return index;
+            ttsContinueRef.current = true;
+            offsetRef.current = 0;
+            return index + 1;
           });
         }
       });
     },
-    [bridge, chapters],
+    [bridge, chapters.length],
   );
+
+  // Keep the TTS queue on the chapter being read: manual navigation, page
+  // flips at chapter edges, and auto-advance all funnel through here.
+  useEffect(() => {
+    const tts = ttsRef.current;
+    if (!tts || !ttsOpen) return;
+    const resume = ttsContinueRef.current || tts.status.playing;
+    ttsContinueRef.current = false;
+    const offset =
+      offsetRef.current >= Number.MAX_SAFE_INTEGER
+        ? Math.max(0, chapterText.length - 1)
+        : offsetRef.current;
+    tts.load(chapterText, offset);
+    if (resume) tts.play();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chapterIndex]);
 
   /**
    * First Listen: load Kokoro (neural, local, cached after first download);
@@ -289,46 +330,64 @@ export function Reader({ book, chapters, initialAnnotations, initialPosition }: 
 
   if (!chapter) return null;
 
+  const chrome = THEME_PREVIEWS.find((preview) => preview.key === theme)!;
+  // Chrome controls sit quietly on the page color until hovered — the whole
+  // window reads as one book page.
+  const chromeButton =
+    'electron-no-drag flex h-full items-center px-2.5 opacity-55 transition hover:opacity-100';
+  const closeMenus = () => {
+    setTocOpen(false);
+    setThemeOpen(false);
+    setLayoutOpen(false);
+    setTypeOpen(false);
+  };
+  const anyMenuOpen = tocOpen || themeOpen || layoutOpen || typeOpen;
+
   return (
-    <div className="flex h-screen flex-col">
+    <div
+      className="flex h-screen flex-col transition-colors"
+      style={{ background: chrome.bg, color: chrome.fg }}
+    >
       <header
-        className={`flex items-center justify-between border-b border-[#e6dfd4] bg-[#faf7f2] px-4 py-2 text-sm ${
-          isElectron ? 'electron-drag pl-20 pt-3' : ''
+        className={`flex h-12 shrink-0 items-stretch justify-between text-sm ${
+          isElectron ? 'electron-drag pl-20' : 'pl-2'
         }`}
       >
-        <div className="flex min-w-0 items-center gap-4">
-          <Link href="/" className="electron-no-drag shrink-0 font-medium text-[#8b5e3c]">
+        <div className="flex min-w-0 items-stretch">
+          <Link href="/" className={`${chromeButton} shrink-0 font-medium`}>
             ← Library
           </Link>
-          <span className="truncate font-semibold">{book.title}</span>
+          <span className="flex items-center truncate px-1.5 font-semibold opacity-80">
+            {book.title}
+          </span>
         </div>
-        <div className="electron-no-drag flex shrink-0 items-center gap-4">
-          <button onClick={() => { setThemeOpen(false); setTocOpen((v) => !v); }} className="text-[#8b5e3c]">
+        <div className="flex shrink-0 items-stretch pr-2">
+          <button onClick={() => { closeMenus(); setTocOpen(!tocOpen); }} className={chromeButton}>
             Chapters
           </button>
-          <button onClick={() => { setTocOpen(false); setThemeOpen((v) => !v); }} className="text-[#8b5e3c]">
+          <button onClick={() => { closeMenus(); setThemeOpen(!themeOpen); }} className={chromeButton}>
             Theme
           </button>
           <button
-            onClick={() => setPagination((p) => (p === 'scroll' ? 'paged' : 'scroll'))}
-            className="text-[#8b5e3c]"
-            title={pagination === 'scroll' ? 'Switch to page flipping' : 'Switch to scrolling'}
+            onClick={() => { closeMenus(); setLayoutOpen(!layoutOpen); }}
+            className={chromeButton}
           >
-            {pagination === 'scroll' ? 'Pages' : 'Scroll'}
+            Layout
           </button>
-          <button onClick={() => setFontSize((s) => Math.max(14, s - 1))} className="text-[#8b5e3c]">
-            A-
-          </button>
-          <button onClick={() => setFontSize((s) => Math.min(26, s + 1))} className="text-[#8b5e3c]">
-            A+
+          <button
+            onClick={() => { closeMenus(); setTypeOpen(!typeOpen); }}
+            className={`${chromeButton} ${fontSize !== DEFAULT_FONT_SIZE ? 'font-semibold !opacity-90' : ''}`}
+            title="Typography"
+          >
+            Aa{fontSize !== DEFAULT_FONT_SIZE ? '·' : ''}
           </button>
           <button
             onClick={() => void toggleTts()}
-            className={ttsOpen ? 'text-[#b3402a]' : 'text-[#8b5e3c]'}
+            className={`${chromeButton} ${ttsOpen ? 'font-semibold !opacity-100' : ''}`}
           >
             {ttsOpen ? 'Stop' : 'Listen'}
           </button>
-          <Link href={`/notes/${book.id}`} className="text-[#8b5e3c]">
+          <Link href={`/notes/${book.id}`} className={chromeButton}>
             Notes
           </Link>
         </div>
@@ -343,19 +402,16 @@ export function Reader({ book, chapters, initialAnnotations, initialPosition }: 
           title={chapter.title}
         />
 
-        {tocOpen || themeOpen ? (
+        {anyMenuOpen ? (
           <button
             aria-label="Close menu"
             className="absolute inset-0 z-10 cursor-default"
-            onClick={() => {
-              setTocOpen(false);
-              setThemeOpen(false);
-            }}
+            onClick={closeMenus}
           />
         ) : null}
 
         {tocOpen ? (
-          <nav className="absolute right-4 top-2 z-20 max-h-[70%] w-72 overflow-auto rounded-xl border border-[#e6dfd4] bg-white p-2 shadow-lg">
+          <nav className="absolute right-4 top-2 z-20 max-h-[70%] w-72 overflow-auto rounded-xl border border-[#e6dfd4] bg-white p-2 text-[#26221c] shadow-lg">
             {chapters.map((c, i) => (
               <button
                 key={i}
@@ -371,7 +427,7 @@ export function Reader({ book, chapters, initialAnnotations, initialPosition }: 
         ) : null}
 
         {themeOpen ? (
-          <div className="absolute right-4 top-2 z-20 w-56 rounded-xl border border-[#e6dfd4] bg-white p-2 shadow-lg">
+          <div className="absolute right-4 top-2 z-20 w-56 rounded-xl border border-[#e6dfd4] bg-white p-2 text-[#26221c] shadow-lg">
             {THEME_PREVIEWS.map((preview) => (
               <button
                 key={preview.key}
@@ -397,8 +453,102 @@ export function Reader({ book, chapters, initialAnnotations, initialPosition }: 
           </div>
         ) : null}
 
+        {layoutOpen ? (
+          <div className="absolute right-4 top-2 z-20 w-64 rounded-xl border border-[#e6dfd4] bg-white p-2 text-[#26221c] shadow-lg">
+            {(
+              [
+                {
+                  key: 'scroll' as const,
+                  label: 'Scroll',
+                  hint: 'One continuous flow',
+                  icon: (
+                    <svg viewBox="0 0 36 44" className="h-10 w-8">
+                      <rect x="2" y="2" width="32" height="40" rx="3" fill="none" stroke="currentColor" />
+                      {[9, 15, 21, 27, 33].map((y) => (
+                        <line key={y} x1="7" y1={y} x2="29" y2={y} stroke="currentColor" strokeWidth="2" opacity="0.6" />
+                      ))}
+                      <path d="M18 36 l-3 -3 h6 z" fill="currentColor" opacity="0.6" />
+                    </svg>
+                  ),
+                },
+                {
+                  key: 'paged' as const,
+                  label: 'Pages',
+                  hint: 'Flip like a book',
+                  icon: (
+                    <svg viewBox="0 0 36 44" className="h-10 w-8">
+                      <rect x="2" y="2" width="32" height="40" rx="3" fill="none" stroke="currentColor" />
+                      <line x1="18" y1="4" x2="18" y2="40" stroke="currentColor" opacity="0.4" />
+                      {[10, 16, 22, 28].map((y) => (
+                        <g key={y} opacity="0.6">
+                          <line x1="6" y1={y} x2="15" y2={y} stroke="currentColor" strokeWidth="2" />
+                          <line x1="21" y1={y} x2="30" y2={y} stroke="currentColor" strokeWidth="2" />
+                        </g>
+                      ))}
+                    </svg>
+                  ),
+                },
+              ]
+            ).map((option) => (
+              <button
+                key={option.key}
+                onClick={() => {
+                  setPagination(option.key);
+                  setLayoutOpen(false);
+                }}
+                className={`mb-1 flex w-full items-center gap-3 rounded-lg border px-3 py-2 text-left text-sm transition hover:border-[#8b5e3c] ${
+                  pagination === option.key ? 'border-[#8b5e3c]' : 'border-transparent'
+                }`}
+              >
+                <span className="shrink-0 text-[#6b6459]">{option.icon}</span>
+                <span>
+                  <span className={`block ${pagination === option.key ? 'font-bold text-[#8b5e3c]' : 'font-medium'}`}>
+                    {option.label}
+                  </span>
+                  <span className="block text-xs text-[#6b6459]">{option.hint}</span>
+                </span>
+              </button>
+            ))}
+          </div>
+        ) : null}
+
+        {typeOpen ? (
+          <div className="absolute right-4 top-2 z-20 w-64 rounded-xl border border-[#e6dfd4] bg-white p-4 text-[#26221c] shadow-lg">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold uppercase tracking-wide text-[#6b6459]">
+                Text size
+              </span>
+              {fontSize !== DEFAULT_FONT_SIZE ? (
+                <button
+                  onClick={() => setFontSize(DEFAULT_FONT_SIZE)}
+                  className="text-xs font-medium text-[#8b5e3c]"
+                >
+                  Reset
+                </button>
+              ) : null}
+            </div>
+            <div className="mt-3 flex items-center justify-between">
+              <button
+                onClick={() => setFontSize((s) => Math.max(14, s - 1))}
+                className="flex h-10 w-16 items-center justify-center rounded-lg border border-[#e6dfd4] text-sm transition hover:border-[#8b5e3c]"
+              >
+                A−
+              </button>
+              <span className="font-serif" style={{ fontSize: Math.min(fontSize, 24) }}>
+                {fontSize}px
+              </span>
+              <button
+                onClick={() => setFontSize((s) => Math.min(26, s + 1))}
+                className="flex h-10 w-16 items-center justify-center rounded-lg border border-[#e6dfd4] text-lg transition hover:border-[#8b5e3c]"
+              >
+                A+
+              </button>
+            </div>
+          </div>
+        ) : null}
+
         {selection ? (
-          <div className="absolute bottom-16 left-1/2 z-10 flex -translate-x-1/2 items-center gap-3 rounded-full bg-white px-5 py-2.5 shadow-xl ring-1 ring-[#e6dfd4]">
+          <div className="absolute bottom-16 left-1/2 z-10 flex -translate-x-1/2 items-center gap-3 rounded-full bg-white px-5 py-2.5 text-[#26221c] shadow-xl ring-1 ring-[#e6dfd4]">
             {(Object.keys(HIGHLIGHT_COLORS) as HighlightColor[]).map((color) => (
               <button
                 key={color}
@@ -409,17 +559,50 @@ export function Reader({ book, chapters, initialAnnotations, initialPosition }: 
               />
             ))}
             <button
-              onClick={() => {
-                const note = prompt('Add note', '');
-                if (note !== null) void addHighlight('yellow', note.trim() || undefined);
-              }}
-              className="text-sm font-semibold text-[#8b5e3c]"
+              onClick={() => setNoteDraft('')}
+              className="px-1 py-1 text-sm font-semibold text-[#8b5e3c]"
             >
               Note
             </button>
-            <button onClick={() => void sharePassage()} className="text-sm font-semibold text-[#8b5e3c]">
+            <button
+              onClick={() => void sharePassage()}
+              className="px-1 py-1 text-sm font-semibold text-[#8b5e3c]"
+            >
               Share
             </button>
+          </div>
+        ) : null}
+
+        {noteDraft !== undefined && selection ? (
+          <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/30 p-6">
+            <div className="w-full max-w-md rounded-2xl bg-white p-5 text-[#26221c] shadow-2xl">
+              <p className="max-h-20 overflow-hidden text-sm italic text-[#6b6459]">
+                “{selection.text.slice(0, 200)}”
+              </p>
+              <textarea
+                autoFocus
+                value={noteDraft}
+                onChange={(e) => setNoteDraft(e.target.value)}
+                placeholder="Your note…"
+                rows={4}
+                className="mt-3 w-full resize-none rounded-lg border border-[#e6dfd4] p-3 text-sm outline-none focus:border-[#8b5e3c]"
+              />
+              <div className="mt-3 flex justify-end gap-3 text-sm">
+                <button onClick={() => setNoteDraft(undefined)} className="px-3 py-2 text-[#6b6459]">
+                  Cancel
+                </button>
+                <button
+                  onClick={() => {
+                    const note = noteDraft.trim();
+                    setNoteDraft(undefined);
+                    void addHighlight('yellow', note || undefined);
+                  }}
+                  className="rounded-full bg-[#8b5e3c] px-4 py-2 font-semibold text-white"
+                >
+                  Save note
+                </button>
+              </div>
+            </div>
           </div>
         ) : null}
 
@@ -431,17 +614,34 @@ export function Reader({ book, chapters, initialAnnotations, initialPosition }: 
               </span>
             ) : (
               <>
-                <button onClick={() => ttsRef.current?.previous()}>⏮</button>
                 <button
+                  aria-label="Previous sentence"
+                  onClick={() => ttsRef.current?.previous()}
+                  className="p-1 text-[#6b6459] transition hover:text-[#26221c]"
+                >
+                  <PlayerIcon d="M19 5 L9 12 L19 19 Z M7 5 v14" />
+                </button>
+                <button
+                  aria-label={ttsPlaying ? 'Pause' : 'Play'}
                   onClick={() =>
                     ttsPlaying ? ttsRef.current?.stop() : ttsRef.current?.play()
                   }
-                  className="text-xl text-[#8b5e3c]"
+                  className="p-1 text-[#8b5e3c] transition hover:opacity-75"
                 >
-                  {ttsPlaying ? '⏸' : '▶'}
+                  {ttsPlaying ? (
+                    <PlayerIcon filled d="M7 5 h3.5 v14 H7 Z M13.5 5 H17 v14 h-3.5 Z" />
+                  ) : (
+                    <PlayerIcon filled d="M8 5 L19 12 L8 19 Z" />
+                  )}
                 </button>
-                <button onClick={() => ttsRef.current?.next()}>⏭</button>
-                <button onClick={cycleRate} className="text-sm font-bold text-[#6b6459]">
+                <button
+                  aria-label="Next sentence"
+                  onClick={() => ttsRef.current?.next()}
+                  className="p-1 text-[#6b6459] transition hover:text-[#26221c]"
+                >
+                  <PlayerIcon d="M5 5 L15 12 L5 19 Z M17 5 v14" />
+                </button>
+                <button onClick={cycleRate} className="p-1 text-sm font-bold text-[#6b6459]">
                   {rate.toFixed(2).replace(/0$/, '')}×
                 </button>
                 {ttsEngine === 'system' ? (
@@ -455,21 +655,21 @@ export function Reader({ book, chapters, initialAnnotations, initialPosition }: 
         ) : null}
       </div>
 
-      <footer className="flex items-center justify-between border-t border-[#e6dfd4] bg-[#faf7f2] px-4 py-2 text-sm">
+      <footer className="flex h-10 shrink-0 items-stretch justify-between px-2 text-sm">
         <button
           disabled={chapterIndex === 0}
           onClick={() => goToChapter(chapterIndex - 1)}
-          className="text-[#8b5e3c] disabled:opacity-30"
+          className="flex items-center px-3 opacity-55 transition hover:opacity-100 disabled:opacity-20"
         >
           ‹ Prev
         </button>
-        <span className="truncate text-xs text-[#6b6459]">
+        <span className="flex items-center truncate text-xs opacity-50">
           {chapterIndex + 1} / {chapters.length} · {chapter.title}
         </span>
         <button
           disabled={chapterIndex >= chapters.length - 1}
           onClick={() => goToChapter(chapterIndex + 1)}
-          className="text-[#8b5e3c] disabled:opacity-30"
+          className="flex items-center px-3 opacity-55 transition hover:opacity-100 disabled:opacity-20"
         >
           Next ›
         </button>

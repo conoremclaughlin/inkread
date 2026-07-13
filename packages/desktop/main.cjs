@@ -18,6 +18,8 @@ function createWindow() {
     title: 'inkread',
     backgroundColor: '#faf7f2',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
+    // Center the traffic lights on the reader's 48px header row.
+    trafficLightPosition: { x: 16, y: 17 },
     webPreferences: {
       partition: 'persist:inkread',
       contextIsolation: true,
