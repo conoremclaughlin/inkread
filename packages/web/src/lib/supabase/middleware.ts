@@ -29,9 +29,19 @@ export async function updateSession(request: NextRequest) {
     },
   );
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  let user = null;
+  try {
+    const { data, error } = await supabase.auth.getUser();
+    // A retryable/network auth error means the backend is unreachable, not
+    // that the visitor is logged out — let the request through so pages can
+    // fall back to the on-device cache.
+    if (error && (error.status === 0 || error.status === undefined || error.status >= 500)) {
+      return supabaseResponse;
+    }
+    user = data.user;
+  } catch {
+    return supabaseResponse;
+  }
 
   const { pathname } = request.nextUrl;
   const isPublic = PUBLIC_PATHS.some((p) => pathname.startsWith(p));

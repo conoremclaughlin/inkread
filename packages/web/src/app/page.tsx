@@ -3,10 +3,17 @@ import { getRepository } from '@/lib/data';
 import { signOut } from '@/lib/auth/actions';
 import { ImportPdf } from '@/components/ImportPdf';
 import { BookActions } from '@/components/BookActions';
+import { LocalLibraryFallback } from '@/components/LocalFallback';
 
 export default async function LibraryPage() {
-  const repository = await getRepository();
-  const books = await repository.listBooks();
+  let books;
+  try {
+    const repository = await getRepository();
+    books = await repository.listBooks();
+  } catch {
+    // Data layer unreachable — show the on-device library.
+    return <LocalLibraryFallback />;
+  }
 
   return (
     <main className="mx-auto max-w-3xl px-6 py-10">

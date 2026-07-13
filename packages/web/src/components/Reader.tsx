@@ -27,6 +27,8 @@ interface ReaderProps {
   initialAnnotations: Annotation[];
   initialPosition: ReadingPosition | null;
   initialPreferences?: ReaderPreferences;
+  /** Reading from the device cache; server writes are skipped. */
+  offline?: boolean;
 }
 
 interface Selection {
@@ -81,6 +83,7 @@ export function Reader({
   initialAnnotations,
   initialPosition,
   initialPreferences,
+  offline,
 }: ReaderProps) {
   const [chapterIndex, setChapterIndex] = useState(
     Math.min(initialPosition?.chapterIndex ?? 0, chapters.length - 1),
@@ -113,6 +116,7 @@ export function Reader({
       prefsLoaded.current = true;
       return;
     }
+    if (offline) return;
     if (prefsTimer.current) clearTimeout(prefsTimer.current);
     prefsTimer.current = setTimeout(() => {
       void fetch('/api/preferences', {
@@ -220,7 +224,7 @@ export function Reader({
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ chapterIndex, offset }),
-        });
+        }).catch(() => undefined);
       }, 800);
     },
     [book.id, chapterIndex],
