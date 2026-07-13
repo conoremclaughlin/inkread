@@ -15,7 +15,8 @@ import {
 } from '@inkread/core';
 import type { BookSummary, ReaderPreferences } from '@/lib/data/repository';
 import { WebTtsController } from '@/lib/tts';
-import { KokoroTtsController } from '@/lib/tts/kokoro';
+import { KokoroTtsController, KOKORO_DEFAULT_VOICE } from '@/lib/tts/kokoro';
+import { KOKORO_VOICES } from '@/lib/tts/voices';
 import { useIsElectron } from '@/lib/useIsElectron';
 
 type TtsPlayer = WebTtsController | KokoroTtsController;
@@ -106,6 +107,8 @@ export function Reader({
   const [ttsOpen, setTtsOpen] = useState(false);
   const [ttsPlaying, setTtsPlaying] = useState(false);
   const [rate, setRate] = useState(initialPreferences?.ttsRate ?? 1.0);
+  const [voice, setVoice] = useState(initialPreferences?.ttsVoice ?? KOKORO_DEFAULT_VOICE);
+  const voiceRef = useRef(voice);
   const isElectron = useIsElectron();
 
   // Persist reading settings (debounced) so they follow the user.
@@ -122,10 +125,10 @@ export function Reader({
       void fetch('/api/preferences', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ theme, fontSize, pagination, ttsRate: rate }),
+        body: JSON.stringify({ theme, fontSize, pagination, ttsRate: rate, ttsVoice: voice }),
       });
     }, 600);
-  }, [theme, fontSize, pagination, rate]);
+  }, [theme, fontSize, pagination, rate, voice]);
 
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const offsetRef = useRef(initialPosition?.offset ?? 0);
@@ -153,6 +156,7 @@ export function Reader({
   }, []);
 
   const ttsContinueRef = useRef(false);
+  const ttsStaleRef = useRef(false);
 
   const attachTtsListener = useCallback(
     (tts: TtsPlayer) => {
@@ -176,6 +180,13 @@ export function Reader({
     [bridge, chapters.length],
   );
 
+  // Returning listeners get the model warmed in the background, so the
+  // first Listen of the session starts in ~a second instead of several.
+  useEffect(() => {
+    if (initialPreferences?.ttsUsed) void getTts().catch(() => undefined);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Keep the TTS queue on the chapter being read: manual navigation, page
   // flips at chapter edges, and auto-advance all funnel through here.
   useEffect(() => {
@@ -187,6 +198,7 @@ export function Reader({
       offsetRef.current >= Number.MAX_SAFE_INTEGER
         ? Math.max(0, chapterText.length - 1)
         : offsetRef.current;
+    ttsStaleRef.current = false;
     tts.load(chapterText, offset);
     if (resume) tts.play();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -203,8 +215,16 @@ export function Reader({
       const kokoro = new KokoroTtsController();
       setTtsProgress(0);
       await kokoro.init((progress) => setTtsProgress(progress));
+      kokoro.setVoice(voiceRef.current);
       player = kokoro;
       setTtsEngine('kokoro');
+      if (!offline && !initialPreferences?.ttsUsed) {
+        void fetch('/api/preferences', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ttsUsed: true }),
+        }).catch(() => undefined);
+      }
     } catch (error) {
       console.warn('Kokoro TTS unavailable, using system voice:', error);
       player = new WebTtsController();
@@ -219,6 +239,10 @@ export function Reader({
   const savePosition = useCallback(
     (offset: number) => {
       offsetRef.current = offset;
+      // Reading moved while TTS was paused → the queue is now stale; the
+      // next play should pick up from here, not from the old sentence.
+      const tts = ttsRef.current;
+      if (tts && !tts.status.playing) ttsStaleRef.current = true;
       setFurthest((prior) => {
         if (
           !prior ||
@@ -361,6 +385,7 @@ export function Reader({
     }
     setTtsOpen(true);
     const tts = await getTts();
+    ttsStaleRef.current = false;
     tts.load(chapterText, offsetRef.current);
     tts.play();
   }, [bridge, chapterText, getTts, ttsOpen]);
@@ -666,9 +691,21 @@ export function Reader({
                 </button>
                 <button
                   aria-label={ttsPlaying ? 'Pause' : 'Play'}
-                  onClick={() =>
-                    ttsPlaying ? ttsRef.current?.stop() : ttsRef.current?.play()
-                  }
+                  onClick={() => {
+                    const tts = ttsRef.current;
+                    if (!tts) return;
+                    if (ttsPlaying) {
+                      tts.stop();
+                      return;
+                    }
+                    // Turning pages while paused moves the reading position;
+                    // play should follow it rather than jump back.
+                    if (ttsStaleRef.current) {
+                      ttsStaleRef.current = false;
+                      tts.load(chapterText, offsetRef.current);
+                    }
+                    tts.play();
+                  }}
                   className="p-1 text-[#8b5e3c] transition hover:opacity-75"
                 >
                   {ttsPlaying ? (
@@ -687,6 +724,25 @@ export function Reader({
                 <button onClick={cycleRate} className="p-1 text-sm font-bold text-[#6b6459]">
                   {rate.toFixed(2).replace(/0$/, '')}×
                 </button>
+                {ttsEngine === 'kokoro' ? (
+                  <select
+                    aria-label="Voice"
+                    value={voice}
+                    onChange={(e) => {
+                      setVoice(e.target.value);
+                      voiceRef.current = e.target.value;
+                      const tts = ttsRef.current;
+                      if (tts instanceof KokoroTtsController) tts.setVoice(e.target.value);
+                    }}
+                    className="max-w-32 rounded-lg border border-[#e6dfd4] bg-transparent px-1.5 py-1 text-xs text-[#6b6459] outline-none"
+                  >
+                    {KOKORO_VOICES.map((v) => (
+                      <option key={v.id} value={v.id}>
+                        {v.label}
+                      </option>
+                    ))}
+                  </select>
+                ) : null}
                 {ttsEngine === 'system' ? (
                   <span className="text-xs text-[#6b6459]" title="Neural voice unavailable; using the system voice">
                     system voice

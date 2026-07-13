@@ -38,6 +38,8 @@ export interface ReaderPreferences {
   fontSize?: number;
   ttsRate?: number;
   ttsVoice?: string;
+  /** Set after the first successful neural-TTS init; enables background warm-up. */
+  ttsUsed?: boolean;
 }
 
 export interface LibraryRepository {
