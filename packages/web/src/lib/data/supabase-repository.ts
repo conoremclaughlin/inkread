@@ -195,6 +195,28 @@ export class SupabaseLibraryRepository implements LibraryRepository {
     return rowToBook(data as BookRow);
   }
 
+  async insertChapters(bookId: string, chapters: Chapter[], at: number): Promise<BookSummary> {
+    const { error } = await this.supabase.rpc('insert_chapters', {
+      p_book_id: bookId,
+      p_at: at,
+      p_chapters: chapters,
+    });
+    if (error) this.fail('insertChapters', error);
+    const book = await this.getBook(bookId);
+    if (!book) throw new Error('insertChapters: book not found');
+    return book;
+  }
+
+  async getChapterTitles(bookId: string): Promise<string[]> {
+    const { data, error } = await this.supabase
+      .from('chapters')
+      .select('title')
+      .eq('book_id', bookId)
+      .order('chapter_index');
+    if (error) this.fail('getChapterTitles', error);
+    return (data as { title: string }[]).map((row) => row.title);
+  }
+
   async deleteBook(bookId: string): Promise<void> {
     const { error } = await this.supabase.from('books').delete().eq('id', bookId);
     if (error) this.fail('deleteBook', error);

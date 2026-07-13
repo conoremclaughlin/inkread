@@ -1942,7 +1942,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@inkread/client-store@workspace:packages/client-store":
+"@inkread/client-store@workspace:*, @inkread/client-store@workspace:packages/client-store":
   version: 0.0.0-use.local
   resolution: "@inkread/client-store@workspace:packages/client-store"
   dependencies:
@@ -2004,7 +2004,9 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@inkread/web@workspace:packages/web"
   dependencies:
+    "@inkread/client-store": "workspace:*"
     "@inkread/core": "workspace:*"
+    "@sqlite.org/sqlite-wasm": "npm:^3.53.0-build1"
     "@supabase/ssr": "npm:^0.8.0"
     "@supabase/supabase-js": "npm:^2.60.0"
     "@tailwindcss/postcss": "npm:^4"
@@ -2833,6 +2835,13 @@ __metadata:
   version: 4.6.0
   resolution: "@sindresorhus/is@npm:4.6.0"
   checksum: 10/e7f36ed72abfcd5e0355f7423a72918b9748bb1ef370a59f3e5ad8d40b728b85d63b272f65f63eec1faf417cda89dcb0aeebe94015647b6054659c1442fe5ce0
+  languageName: node
+  linkType: hard
+
+"@sqlite.org/sqlite-wasm@npm:^3.53.0-build1":
+  version: 3.53.0-build1
+  resolution: "@sqlite.org/sqlite-wasm@npm:3.53.0-build1"
+  checksum: 10/7e8aedffb6dbb5790c681728b62febbd918eba9094c4eb5b5e5d4ac965a31b5cc371a1e0fe9eab48e93b23c09ae0c23b198667de271858a695e9b4aca145105a
   languageName: node
   linkType: hard
 

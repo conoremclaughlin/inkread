@@ -162,6 +162,43 @@ describe.skipIf(!up)('SupabaseLibraryRepository (integration)', () => {
     expect(await repository.listAnnotations(book.id)).toEqual(before);
   });
 
+  it('inserts chapters mid-book, shifting later anchors atomically', async () => {
+    const book = await repository.createBook({
+      title: 'Insert Test',
+      source: 'text',
+      chapters: [
+        { title: 'Alpha', paragraphs: ['A.'] },
+        { title: 'Gamma', paragraphs: ['C.'] },
+      ],
+    });
+    const annotation = await repository.createAnnotation({
+      bookId: book.id,
+      kind: 'highlight',
+      chapterIndex: 1,
+      start: 0,
+      end: 2,
+      passage: 'C.',
+      color: 'blue',
+      chapterTitle: 'Gamma',
+    });
+    await repository.savePosition({ bookId: book.id, chapterIndex: 1, offset: 1 });
+
+    const updated = await repository.insertChapters(
+      book.id,
+      [{ title: 'Beta', paragraphs: ['B.'] }],
+      1,
+    );
+    expect(updated.chapterCount).toBe(3);
+    expect(await repository.getChapterTitles(book.id)).toEqual(['Alpha', 'Beta', 'Gamma']);
+
+    const [shifted] = await repository.listAnnotations(book.id);
+    expect(shifted!.id).toBe(annotation.id);
+    expect(shifted!.locator.chapterIndex).toBe(2);
+    expect((await repository.getPosition(book.id))?.chapterIndex).toBe(2);
+
+    await repository.deleteBook(book.id);
+  });
+
   it('merges preference patches per user', async () => {
     expect(await repository.getPreferences()).toEqual({});
     await repository.savePreferences({ theme: 'midnight', fontSize: 21 });

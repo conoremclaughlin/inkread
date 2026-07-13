@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import './globals.css';
 import { ElectronChrome } from '@/components/ElectronChrome';
+import { SyncAgent } from '@/components/SyncAgent';
 
 export const metadata: Metadata = {
   title: 'inkread',
@@ -12,6 +13,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <body className="min-h-screen bg-[#faf7f2] text-[#26221c] antialiased">
         <ElectronChrome />
+        <SyncAgent />
         {children}
       </body>
     </html>

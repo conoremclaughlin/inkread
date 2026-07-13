@@ -51,6 +51,13 @@ export interface LibraryRepository {
   createBook(input: CreateBookInput): Promise<BookSummary>;
   /** Adds chapters after the book's current last chapter; annotations untouched. */
   appendChapters(bookId: string, chapters: Chapter[]): Promise<BookSummary>;
+  /**
+   * Inserts chapters at a position, shifting later chapters and remapping
+   * annotation/position anchors atomically.
+   */
+  insertChapters(bookId: string, chapters: Chapter[], at: number): Promise<BookSummary>;
+  /** Chapter titles in order — cheap TOC without the content payload. */
+  getChapterTitles(bookId: string): Promise<string[]>;
   deleteBook(bookId: string): Promise<void>;
 
   listAnnotations(bookId: string): Promise<Annotation[]>;
