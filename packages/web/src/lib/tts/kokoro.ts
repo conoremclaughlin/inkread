@@ -89,6 +89,15 @@ export class KokoroTtsController {
     if (voice === this.voice) return;
     this.voice = voice;
     this.buffers.clear();
+    if (this.playing) {
+      this.generation += 1;
+      this.stopSource();
+      void this.speakCurrent();
+    }
+  }
+
+  getVoice(): string {
+    return this.voice;
   }
 
   load(text: string, startOffset = 0): void {
@@ -97,6 +106,8 @@ export class KokoroTtsController {
     this.buffers.clear();
     const index = this.sentences.findIndex((s) => s.end > startOffset);
     this.index = index === -1 ? 0 : index;
+    // Pre-synthesize the first sentence so pressing play is near-instant.
+    void this.requestBuffer(this.index)?.catch(() => undefined);
     this.notify();
   }
 
