@@ -13,7 +13,7 @@ import {
   type ReaderTheme,
   type ReadingPosition,
 } from '@inkread/core';
-import type { BookSummary } from '@/lib/data/repository';
+import type { BookSummary, ReaderPreferences } from '@/lib/data/repository';
 import { WebTtsController } from '@/lib/tts';
 import { KokoroTtsController } from '@/lib/tts/kokoro';
 import { useIsElectron } from '@/lib/useIsElectron';
@@ -26,6 +26,7 @@ interface ReaderProps {
   chapters: Chapter[];
   initialAnnotations: Annotation[];
   initialPosition: ReadingPosition | null;
+  initialPreferences?: ReaderPreferences;
 }
 
 interface Selection {
@@ -74,13 +75,24 @@ type ReaderBridge = {
   clearSentence: () => void;
 };
 
-export function Reader({ book, chapters, initialAnnotations, initialPosition }: ReaderProps) {
+export function Reader({
+  book,
+  chapters,
+  initialAnnotations,
+  initialPosition,
+  initialPreferences,
+}: ReaderProps) {
   const [chapterIndex, setChapterIndex] = useState(
     Math.min(initialPosition?.chapterIndex ?? 0, chapters.length - 1),
   );
-  const [theme, setTheme] = useState<ReaderTheme>('paper');
-  const [fontSize, setFontSize] = useState(DEFAULT_FONT_SIZE);
-  const [pagination, setPagination] = useState<'scroll' | 'paged'>('scroll');
+  const [theme, setTheme] = useState<ReaderTheme>(
+    (initialPreferences?.theme as ReaderTheme) ?? 'paper',
+  );
+  const [fontSize, setFontSize] = useState(initialPreferences?.fontSize ?? DEFAULT_FONT_SIZE);
+  const [pagination, setPagination] = useState<'scroll' | 'paged'>(
+    initialPreferences?.pagination ?? 'scroll',
+  );
+
   const [annotations, setAnnotations] = useState(initialAnnotations);
   const [selection, setSelection] = useState<Selection>();
   const [tocOpen, setTocOpen] = useState(false);
@@ -90,8 +102,26 @@ export function Reader({ book, chapters, initialAnnotations, initialPosition }: 
   const [noteDraft, setNoteDraft] = useState<string>();
   const [ttsOpen, setTtsOpen] = useState(false);
   const [ttsPlaying, setTtsPlaying] = useState(false);
-  const [rate, setRate] = useState(1.0);
+  const [rate, setRate] = useState(initialPreferences?.ttsRate ?? 1.0);
   const isElectron = useIsElectron();
+
+  // Persist reading settings (debounced) so they follow the user.
+  const prefsTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const prefsLoaded = useRef(false);
+  useEffect(() => {
+    if (!prefsLoaded.current) {
+      prefsLoaded.current = true;
+      return;
+    }
+    if (prefsTimer.current) clearTimeout(prefsTimer.current);
+    prefsTimer.current = setTimeout(() => {
+      void fetch('/api/preferences', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ theme, fontSize, pagination, ttsRate: rate }),
+      });
+    }, 600);
+  }, [theme, fontSize, pagination, rate]);
 
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const offsetRef = useRef(initialPosition?.offset ?? 0);

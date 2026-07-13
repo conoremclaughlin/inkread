@@ -61,7 +61,7 @@ export function AuthForm({ mode }: { mode: 'login' | 'signup' }) {
           disabled={pending}
           className="mt-6 w-full rounded-lg bg-[#8b5e3c] py-2.5 font-semibold text-white transition hover:bg-[#75492c] disabled:opacity-50"
         >
-          {pending ? '…' : mode === 'login' ? 'Sign in' : 'Sign up'}
+          {pending ? '…' : mode === 'login' ? 'Log in' : 'Sign up'}
         </button>
         <p className="mt-4 text-center text-sm text-[#6b6459]">
           {mode === 'login' ? (
@@ -75,7 +75,7 @@ export function AuthForm({ mode }: { mode: 'login' | 'signup' }) {
             <>
               Have an account?{' '}
               <Link href="/login" className="font-medium text-[#8b5e3c]">
-                Sign in
+                Log in
               </Link>
             </>
           )}

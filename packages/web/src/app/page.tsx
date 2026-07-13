@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { getRepository } from '@/lib/data';
 import { signOut } from '@/lib/auth/actions';
 import { ImportPdf } from '@/components/ImportPdf';
-import { DeleteBookButton } from '@/components/DeleteBookButton';
+import { BookActions } from '@/components/BookActions';
 
 export default async function LibraryPage() {
   const repository = await getRepository();
@@ -15,7 +15,9 @@ export default async function LibraryPage() {
         <div className="flex items-center gap-3">
           <ImportPdf />
           <form action={signOut}>
-            <button className="text-sm text-[#6b6459] hover:text-[#26221c]">Sign out</button>
+            <button className="px-2 py-2 text-sm text-[#6b6459] hover:text-[#26221c]">
+              Log out
+            </button>
           </form>
         </div>
       </header>
@@ -41,11 +43,11 @@ export default async function LibraryPage() {
                 {book.author ? <div className="text-sm text-[#6b6459]">{book.author}</div> : null}
                 <div className="mt-1 text-xs text-[#6b6459]">{book.chapterCount} chapters</div>
               </Link>
-              <div className="flex items-center gap-3 px-4 text-sm">
-                <Link href={`/notes/${book.id}`} className="font-medium text-[#8b5e3c]">
+              <div className="flex items-center gap-1 px-3 text-sm">
+                <Link href={`/notes/${book.id}`} className="px-2 py-2 font-medium text-[#8b5e3c]">
                   Notes
                 </Link>
-                <DeleteBookButton bookId={book.id} title={book.title} />
+                <BookActions bookId={book.id} title={book.title} />
               </div>
             </li>
           ))}

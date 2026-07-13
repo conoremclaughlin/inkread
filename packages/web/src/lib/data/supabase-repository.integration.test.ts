@@ -145,6 +145,17 @@ describe.skipIf(!up)('SupabaseLibraryRepository (integration)', () => {
     }
   });
 
+  it('merges preference patches per user', async () => {
+    expect(await repository.getPreferences()).toEqual({});
+    await repository.savePreferences({ theme: 'midnight', fontSize: 21 });
+    await repository.savePreferences({ pagination: 'paged' });
+    expect(await repository.getPreferences()).toEqual({
+      theme: 'midnight',
+      fontSize: 21,
+      pagination: 'paged',
+    });
+  });
+
   it('deletes a book and cascades its content', async () => {
     const book = (await repository.listBooks())[0]!;
     await repository.deleteBook(book.id);

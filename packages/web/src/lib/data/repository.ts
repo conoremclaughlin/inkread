@@ -31,7 +31,20 @@ export interface CreateAnnotationInput {
   chapterTitle?: string;
 }
 
+/** Reader settings persisted per user; shape evolves freely (jsonb). */
+export interface ReaderPreferences {
+  theme?: string;
+  pagination?: 'scroll' | 'paged';
+  fontSize?: number;
+  ttsRate?: number;
+  ttsVoice?: string;
+}
+
 export interface LibraryRepository {
+  getPreferences(): Promise<ReaderPreferences>;
+  /** Shallow-merges into the stored preferences. */
+  savePreferences(patch: ReaderPreferences): Promise<void>;
+
   listBooks(): Promise<BookSummary[]>;
   getBook(bookId: string): Promise<BookSummary | undefined>;
   getChapters(bookId: string): Promise<Chapter[] | undefined>;

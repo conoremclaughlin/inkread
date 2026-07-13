@@ -11,6 +11,7 @@ import type {
   CreateAnnotationInput,
   CreateBookInput,
   LibraryRepository,
+  ReaderPreferences,
 } from './repository';
 
 /**
@@ -79,6 +80,24 @@ export class SupabaseLibraryRepository implements LibraryRepository {
 
   private fail(operation: string, error: { message: string }): never {
     throw new Error(`${operation}: ${error.message}`);
+  }
+
+  async getPreferences(): Promise<ReaderPreferences> {
+    const { data, error } = await this.supabase
+      .from('preferences')
+      .select('reader')
+      .maybeSingle();
+    if (error) this.fail('getPreferences', error);
+    return ((data as { reader: ReaderPreferences } | null)?.reader ?? {}) as ReaderPreferences;
+  }
+
+  async savePreferences(patch: ReaderPreferences): Promise<void> {
+    const current = await this.getPreferences();
+    const { error } = await this.supabase.from('preferences').upsert(
+      { user_id: this.userId, reader: { ...current, ...patch } },
+      { onConflict: 'user_id' },
+    );
+    if (error) this.fail('savePreferences', error);
   }
 
   async listBooks(): Promise<BookSummary[]> {

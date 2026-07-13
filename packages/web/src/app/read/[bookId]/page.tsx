@@ -8,10 +8,11 @@ export default async function ReadPage({ params }: { params: Promise<{ bookId: s
   const book = await repository.getBook(bookId);
   if (!book) notFound();
 
-  const [chapters, annotations, position] = await Promise.all([
+  const [chapters, annotations, position, preferences] = await Promise.all([
     repository.getChapters(bookId),
     repository.listAnnotations(bookId),
     repository.getPosition(bookId),
+    repository.getPreferences(),
   ]);
   if (!chapters || chapters.length === 0) notFound();
 
@@ -21,6 +22,7 @@ export default async function ReadPage({ params }: { params: Promise<{ bookId: s
       chapters={chapters}
       initialAnnotations={annotations}
       initialPosition={position ?? null}
+      initialPreferences={preferences}
     />
   );
 }
