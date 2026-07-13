@@ -1,0 +1,22 @@
+{
+  "name": "@inkread/client-store",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Shared client-side cache: SQLite schema, store, and sync engine for all inkread clients",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "test": "vitest run",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@inkread/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.0",
+    "@types/node": "^22.10.0",
+    "better-sqlite3": "^12.0.0",
+    "typescript": "^5.8.0",
+    "vitest": "^3.0.0"
+  }
+}

@@ -1,0 +1,120 @@
+import { beforeEach, describe, expect, it } from 'vitest';
+import { ClientStore } from './store';
+import { SyncEngine } from './sync';
+import { jsonResponse, testDriver } from './test-utils';
+
+function makeApi(state: {
+  books: Record<string, unknown>[];
+  chapters: Record<string, unknown[]>;
+  annotations?: Record<string, unknown[]>;
+}) {
+  const calls: string[] = [];
+  const fetcher = async (path: string): Promise<Response> => {
+    calls.push(path);
+    if (path === '/api/books') return jsonResponse({ books: state.books });
+    const content = /^\/api\/books\/([^/?]+)\?include=content$/.exec(path);
+    if (content) {
+      return jsonResponse({ chapters: state.chapters[content[1]!] ?? [] });
+    }
+    const annotations = /^\/api\/books\/([^/]+)\/annotations$/.exec(path);
+    if (annotations) {
+      return jsonResponse({ annotations: state.annotations?.[annotations[1]!] ?? [] });
+    }
+    if (/\/position$/.test(path)) return jsonResponse({ position: null });
+    return jsonResponse({ error: 'not found' }, 404);
+  };
+  return { fetcher, calls };
+}
+
+const BOOK = {
+  id: 'b1',
+  title: 'Synced Book',
+  language: 'en',
+  source: 'text',
+  chapterCount: 1,
+  createdAt: '2026-07-01T00:00:00Z',
+  updatedAt: '2026-07-01T00:00:00Z',
+};
+
+let store: ClientStore;
+
+beforeEach(async () => {
+  store = new ClientStore(testDriver());
+  await store.init();
+});
+
+describe('SyncEngine', () => {
+  it('pulls books, chapters, and annotations on first sync', async () => {
+    const api = makeApi({
+      books: [BOOK],
+      chapters: { b1: [{ title: 'One', paragraphs: ['Hello.'] }] },
+      annotations: {
+        b1: [
+          {
+            id: 'a1',
+            bookId: 'b1',
+            kind: 'highlight',
+            locator: { chapterIndex: 0, start: 0, end: 5 },
+            passage: 'Hello',
+            color: 'yellow',
+            createdAt: '2026-07-01T01:00:00Z',
+          },
+        ],
+      },
+    });
+    const result = await new SyncEngine(store, api.fetcher).pull();
+    expect(result).toEqual({ books: 1, chaptersRefreshed: 1 });
+    expect((await store.getChapters('b1'))[0]!.paragraphs).toEqual(['Hello.']);
+    expect(await store.listAnnotations('b1')).toHaveLength(1);
+    expect(await store.getMeta('last_sync_at')).toBeDefined();
+  });
+
+  it('skips chapter downloads for unchanged books', async () => {
+    const api = makeApi({ books: [BOOK], chapters: { b1: [{ title: 'One', paragraphs: ['Hello.'] }] } });
+    const engine = new SyncEngine(store, api.fetcher);
+    await engine.pull();
+    api.calls.length = 0;
+    await engine.pull();
+    expect(api.calls.filter((c) => c.includes('include=content'))).toHaveLength(0);
+  });
+
+  it('refetches chapters when a book was appended to', async () => {
+    const api = makeApi({ books: [BOOK], chapters: { b1: [{ title: 'One', paragraphs: ['Hello.'] }] } });
+    const engine = new SyncEngine(store, api.fetcher);
+    await engine.pull();
+
+    api.calls.length = 0;
+    const appended = makeApi({
+      books: [{ ...BOOK, chapterCount: 2, updatedAt: '2026-07-02T00:00:00Z' }],
+      chapters: {
+        b1: [
+          { title: 'One', paragraphs: ['Hello.'] },
+          { title: 'Two', paragraphs: ['Appended.'] },
+        ],
+      },
+    });
+    const result = await new SyncEngine(store, appended.fetcher).pull();
+    expect(result.chaptersRefreshed).toBe(1);
+    expect(await store.countChapters('b1')).toBe(2);
+  });
+
+  it('prunes books deleted on the server', async () => {
+    const api = makeApi({ books: [BOOK], chapters: { b1: [{ title: 'One', paragraphs: ['Hello.'] }] } });
+    await new SyncEngine(store, api.fetcher).pull();
+
+    const empty = makeApi({ books: [], chapters: {} });
+    await new SyncEngine(store, empty.fetcher).pull();
+    expect(await store.listBooks()).toEqual([]);
+    expect(await store.countChapters('b1')).toBe(0);
+  });
+
+  it('throws when the book list is unavailable and leaves the cache intact', async () => {
+    const api = makeApi({ books: [BOOK], chapters: { b1: [{ title: 'One', paragraphs: ['Hello.'] }] } });
+    await new SyncEngine(store, api.fetcher).pull();
+
+    const offline = async () => jsonResponse({ error: 'offline' }, 503);
+    await expect(new SyncEngine(store, offline).pull()).rejects.toThrow('503');
+    expect(await store.listBooks()).toHaveLength(1);
+    expect((await store.getChapters('b1'))[0]!.paragraphs).toEqual(['Hello.']);
+  });
+});
