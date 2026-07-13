@@ -14,6 +14,10 @@ import {
 } from '@inkread/core';
 import type { BookSummary } from '@/lib/data/repository';
 import { WebTtsController } from '@/lib/tts';
+import { KokoroTtsController } from '@/lib/tts/kokoro';
+
+type TtsPlayer = WebTtsController | KokoroTtsController;
+type TtsEngine = 'kokoro' | 'system';
 
 interface ReaderProps {
   book: BookSummary;
@@ -65,7 +69,9 @@ export function Reader({ book, chapters, initialAnnotations, initialPosition }: 
 
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const offsetRef = useRef(initialPosition?.offset ?? 0);
-  const ttsRef = useRef<WebTtsController | null>(null);
+  const ttsRef = useRef<TtsPlayer | null>(null);
+  const [ttsEngine, setTtsEngine] = useState<TtsEngine>();
+  const [ttsProgress, setTtsProgress] = useState<number>();
   const saveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const chapter = chapters[chapterIndex];
@@ -85,10 +91,54 @@ export function Reader({ book, chapters, initialAnnotations, initialPosition }: 
       ?.__reader;
   }, []);
 
-  const getTts = useCallback((): WebTtsController => {
-    if (!ttsRef.current) ttsRef.current = new WebTtsController();
-    return ttsRef.current;
-  }, []);
+  const attachTtsListener = useCallback(
+    (tts: TtsPlayer) => {
+      tts.setListener((status) => {
+        setTtsPlaying(status.playing);
+        if (status.playing && status.sentence) {
+          bridge()?.markSentence(status.sentence.start, status.sentence.end);
+        }
+        if (status.playing && !status.sentence && status.finished) {
+          setChapterIndex((index) => {
+            if (index + 1 < chapters.length) {
+              setTimeout(() => {
+                tts.load(chapters[index + 1]!.paragraphs.join('\n'), 0);
+                tts.play();
+              }, 300);
+              return index + 1;
+            }
+            tts.stop();
+            return index;
+          });
+        }
+      });
+    },
+    [bridge, chapters],
+  );
+
+  /**
+   * First Listen: load Kokoro (neural, local, cached after first download);
+   * fall back to the system voice if the model can't load here.
+   */
+  const getTts = useCallback(async (): Promise<TtsPlayer> => {
+    if (ttsRef.current) return ttsRef.current;
+    let player: TtsPlayer;
+    try {
+      const kokoro = new KokoroTtsController();
+      setTtsProgress(0);
+      await kokoro.init((progress) => setTtsProgress(progress));
+      player = kokoro;
+      setTtsEngine('kokoro');
+    } catch (error) {
+      console.warn('Kokoro TTS unavailable, using system voice:', error);
+      player = new WebTtsController();
+      setTtsEngine('system');
+    }
+    setTtsProgress(undefined);
+    ttsRef.current = player;
+    attachTtsListener(player);
+    return player;
+  }, [attachTtsListener]);
 
   const savePosition = useCallback(
     (offset: number) => {
@@ -168,33 +218,15 @@ export function Reader({ book, chapters, initialAnnotations, initialPosition }: 
     return () => window.removeEventListener('message', onMessage);
   }, [annotations, bridge, chapters.length, reloadAnnotations, savePosition]);
 
-  // TTS wiring.
+  // Tear down whichever TTS engine is live when leaving the reader.
   useEffect(() => {
-    const tts = getTts();
-    tts.setListener((status) => {
-      setTtsPlaying(status.playing);
-      if (status.playing && status.sentence) {
-        bridge()?.markSentence(status.sentence.start, status.sentence.end);
-      }
-      if (status.playing && !status.sentence && status.finished) {
-        setChapterIndex((index) => {
-          if (index + 1 < chapters.length) {
-            setTimeout(() => {
-              tts.load(chapters[index + 1]!.paragraphs.join('\n'), 0);
-              tts.play();
-            }, 300);
-            return index + 1;
-          }
-          tts.stop();
-          return index;
-        });
-      }
-    });
     return () => {
+      const tts = ttsRef.current;
+      if (!tts) return;
       tts.setListener(undefined);
-      tts.stop();
+      if ('destroy' in tts) tts.destroy();
+      else tts.stop();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const addHighlight = useCallback(
@@ -236,24 +268,24 @@ export function Reader({ book, chapters, initialAnnotations, initialPosition }: 
     setChapterIndex(index);
   }, []);
 
-  const toggleTts = useCallback(() => {
-    const tts = getTts();
+  const toggleTts = useCallback(async () => {
     if (ttsOpen) {
-      tts.stop();
+      ttsRef.current?.stop();
       setTtsOpen(false);
       bridge()?.clearSentence();
-    } else {
-      tts.load(chapterText, offsetRef.current);
-      setTtsOpen(true);
-      tts.play();
+      return;
     }
+    setTtsOpen(true);
+    const tts = await getTts();
+    tts.load(chapterText, offsetRef.current);
+    tts.play();
   }, [bridge, chapterText, getTts, ttsOpen]);
 
   const cycleRate = useCallback(() => {
     const next = RATES[(RATES.indexOf(rate) + 1) % RATES.length]!;
     setRate(next);
-    getTts().setRate(next);
-  }, [getTts, rate]);
+    ttsRef.current?.setRate(next);
+  }, [rate]);
 
   if (!chapter) return null;
 
@@ -290,7 +322,10 @@ export function Reader({ book, chapters, initialAnnotations, initialPosition }: 
           <button onClick={() => setFontSize((s) => Math.min(26, s + 1))} className="text-[#8b5e3c]">
             A+
           </button>
-          <button onClick={toggleTts} className={ttsOpen ? 'text-[#b3402a]' : 'text-[#8b5e3c]'}>
+          <button
+            onClick={() => void toggleTts()}
+            className={ttsOpen ? 'text-[#b3402a]' : 'text-[#8b5e3c]'}
+          >
             {ttsOpen ? 'Stop' : 'Listen'}
           </button>
           <Link href={`/notes/${book.id}`} className="text-[#8b5e3c]">
@@ -390,14 +425,32 @@ export function Reader({ book, chapters, initialAnnotations, initialPosition }: 
 
         {ttsOpen ? (
           <div className="absolute bottom-16 right-6 z-10 flex items-center gap-4 rounded-full bg-white px-5 py-2.5 shadow-xl ring-1 ring-[#e6dfd4]">
-            <button onClick={() => getTts().previous()}>⏮</button>
-            <button onClick={() => (ttsPlaying ? getTts().stop() : getTts().play())} className="text-xl text-[#8b5e3c]">
-              {ttsPlaying ? '⏸' : '▶'}
-            </button>
-            <button onClick={() => getTts().next()}>⏭</button>
-            <button onClick={cycleRate} className="text-sm font-bold text-[#6b6459]">
-              {rate.toFixed(2).replace(/0$/, '')}×
-            </button>
+            {ttsProgress !== undefined ? (
+              <span className="text-sm text-[#6b6459]">
+                Preparing voice… {ttsProgress}%
+              </span>
+            ) : (
+              <>
+                <button onClick={() => ttsRef.current?.previous()}>⏮</button>
+                <button
+                  onClick={() =>
+                    ttsPlaying ? ttsRef.current?.stop() : ttsRef.current?.play()
+                  }
+                  className="text-xl text-[#8b5e3c]"
+                >
+                  {ttsPlaying ? '⏸' : '▶'}
+                </button>
+                <button onClick={() => ttsRef.current?.next()}>⏭</button>
+                <button onClick={cycleRate} className="text-sm font-bold text-[#6b6459]">
+                  {rate.toFixed(2).replace(/0$/, '')}×
+                </button>
+                {ttsEngine === 'system' ? (
+                  <span className="text-xs text-[#6b6459]" title="Neural voice unavailable; using the system voice">
+                    system voice
+                  </span>
+                ) : null}
+              </>
+            )}
           </div>
         ) : null}
       </div>
