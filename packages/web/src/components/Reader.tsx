@@ -76,6 +76,8 @@ type ReaderBridge = {
   turnPage: (delta: number) => void;
   markSentence: (start: number, end: number) => void;
   clearSentence: () => void;
+  beginExtend: (anchor: number) => void;
+  endExtend: () => void;
 };
 
 export function Reader({
@@ -142,6 +144,9 @@ export function Reader({
     { passage: string; draft: string; annotationId?: string } | undefined
   >();
   const [acting, setActing] = useState<Annotation | undefined>();
+  const [extend, setExtend] = useState<
+    { anchor: number; anchorText: string; range?: { start: number; end: number; text: string } } | undefined
+  >();
   const [ttsOpen, setTtsOpen] = useState(false);
   const [ttsPlaying, setTtsPlaying] = useState(false);
   const [rate, setRate] = useState(initialPreferences?.ttsRate ?? 1.0);
@@ -251,6 +256,11 @@ export function Reader({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chapterIndex]);
 
+  // A cross-page selection can't span chapters; cancel it on any chapter change.
+  useEffect(() => {
+    setExtend(undefined);
+  }, [chapterIndex]);
+
   /**
    * First Listen: load Kokoro (neural, local, cached after first download);
    * fall back to the system voice if the model can't load here.
@@ -339,6 +349,20 @@ export function Reader({
               text: String(msg.text ?? ''),
             });
           break;
+        case 'extendPoint':
+          setExtend((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  range: {
+                    start: Number(msg.start),
+                    end: Number(msg.end),
+                    text: String(msg.text ?? ''),
+                  },
+                }
+              : prev,
+          );
+          break;
         case 'scroll':
           savePosition(Number(msg.offset) || 0);
           break;
@@ -382,26 +406,58 @@ export function Reader({
     };
   }, []);
 
-  const addHighlight = useCallback(
-    async (color: HighlightColor, note?: string) => {
-      if (!selection || !chapter) return;
+  const createHighlight = useCallback(
+    async (start: number, end: number, passage: string, color: HighlightColor, note?: string) => {
+      if (!chapter) return;
       await fetch(`/api/books/${book.id}/annotations`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           chapterIndex,
-          start: selection.start,
-          end: selection.end,
-          passage: selection.text,
+          start,
+          end,
+          passage,
           note,
           color,
           chapterTitle: chapter.title,
         }),
       });
-      setSelection(undefined);
       await reloadAnnotations();
     },
-    [book.id, chapter, chapterIndex, reloadAnnotations, selection],
+    [book.id, chapter, chapterIndex, reloadAnnotations],
+  );
+
+  const addHighlight = useCallback(
+    async (color: HighlightColor, note?: string) => {
+      if (!selection) return;
+      await createHighlight(selection.start, selection.end, selection.text, color, note);
+      setSelection(undefined);
+    },
+    [createHighlight, selection],
+  );
+
+  // Cross-page highlight: anchor at the selection, flip pages, tap the end.
+  const startExtend = useCallback(() => {
+    if (!selection) return;
+    setExtend({ anchor: selection.start, anchorText: selection.text });
+    bridge()?.beginExtend(selection.start);
+    setSelection(undefined);
+  }, [bridge, selection]);
+
+  const cancelExtend = useCallback(() => {
+    bridge()?.endExtend();
+    setExtend(undefined);
+  }, [bridge]);
+
+  const confirmExtend = useCallback(
+    async (color: HighlightColor) => {
+      const range = extend?.range;
+      if (!range) return;
+      bridge()?.endExtend();
+      setExtend(undefined);
+      await createHighlight(range.start, range.end, range.text, color);
+    },
+    [bridge, createHighlight, extend],
   );
 
   const [copied, setCopied] = useState(false);
@@ -738,6 +794,50 @@ export function Reader({
               style={{ color: themeColors.accent }}
             >
               {copied ? 'Copied ✓' : 'Copy'}
+            </button>
+            {pagination === 'paged' ? (
+              <button
+                onClick={startExtend}
+                className="rounded-lg px-2 py-1 text-sm font-semibold transition hover:opacity-70"
+                style={{ color: themeColors.accent }}
+              >
+                Extend →
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+
+        {extend ? (
+          <div
+            className="absolute bottom-16 left-1/2 z-10 flex max-w-[92vw] -translate-x-1/2 items-center gap-3 rounded-full border px-5 py-2.5 shadow-xl"
+            style={panelStyle}
+          >
+            {extend.range ? (
+              <>
+                <span className="text-sm" style={{ color: mutedColor }}>
+                  End set — pick a color
+                </span>
+                {(Object.keys(HIGHLIGHT_COLORS) as HighlightColor[]).map((color) => (
+                  <button
+                    key={color}
+                    aria-label={`Highlight ${color}`}
+                    onClick={() => void confirmExtend(color)}
+                    className="h-5 w-5 rounded-full ring-[#26221c]/25 ring-offset-1 transition hover:scale-110 hover:ring-2"
+                    style={{ background: `rgb(${HIGHLIGHT_COLORS[color]})` }}
+                  />
+                ))}
+              </>
+            ) : (
+              <span className="text-sm" style={{ color: mutedColor }}>
+                Turn the page, then tap where the highlight ends
+              </span>
+            )}
+            <button
+              onClick={cancelExtend}
+              className="rounded-lg px-2 py-1 text-sm font-semibold transition hover:opacity-70"
+              style={{ color: mutedColor }}
+            >
+              Cancel
             </button>
           </div>
         ) : null}

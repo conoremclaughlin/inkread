@@ -179,6 +179,7 @@ export function buildReaderHtml(
   .hl { border-radius: 2px; }
   .hl-note { border-bottom: 2px solid ${theme.accent}; }
   .tts-mark { background: rgba(120, 170, 255, 0.35); border-radius: 2px; }
+  ::highlight(inkread-extend) { background-color: color-mix(in srgb, ${theme.accent} 34%, transparent); }
   ${colorCss}
 </style>
 </head>
@@ -212,7 +213,50 @@ ${paragraphsHtml}
     return parseInt(p.getAttribute('data-po'), 10) + range.toString().length;
   }
 
+  // --- Cross-page selection: pick a start, flip pages, tap the end. ---
+  var extending = false;
+  var anchorOffset = 0;
+
+  function pointToOffset(x, y) {
+    var node, off;
+    if (document.caretRangeFromPoint) {
+      var r = document.caretRangeFromPoint(x, y);
+      if (!r) return null;
+      node = r.startContainer; off = r.startOffset;
+    } else if (document.caretPositionFromPoint) {
+      var cp = document.caretPositionFromPoint(x, y);
+      if (!cp) return null;
+      node = cp.offsetNode; off = cp.offset;
+    } else { return null; }
+    if (node.nodeType === 3) {
+      var t = node.textContent;
+      while (off < t.length && t[off].trim() !== '') off++; // snap to the end of the tapped word
+    }
+    var p = paragraphOf(node);
+    if (!p) return null;
+    return offsetIn(p, node, off);
+  }
+
+  // Paint the pending range with the Custom Highlight API — it spans column
+  // pages without touching the DOM. Returns the range's text (for the note).
+  function extendPreview(a, b) {
+    var lo = Math.min(a, b), hi = Math.max(a, b);
+    if (hi <= lo) { if (window.CSS && CSS.highlights) CSS.highlights.delete('inkread-extend'); return ''; }
+    var from = resolveOffset(lo), to = resolveOffset(hi);
+    if (!from || !to) return '';
+    try {
+      var range = document.createRange();
+      range.setStart(from.node, from.offset);
+      range.setEnd(to.node, to.offset);
+      if (window.CSS && CSS.highlights && typeof Highlight !== 'undefined') {
+        CSS.highlights.set('inkread-extend', new Highlight(range));
+      }
+      return range.toString();
+    } catch (e) { return ''; }
+  }
+
   document.addEventListener('selectionchange', function () {
+    if (extending) return;
     var sel = window.getSelection();
     if (!sel || sel.isCollapsed || sel.rangeCount === 0) { post({ type: 'selection', clear: true }); return; }
     var range = sel.getRangeAt(0);
@@ -282,6 +326,21 @@ ${paragraphsHtml}
     if (hl) { post({ type: 'tapHighlight', id: hl.getAttribute('data-hl') }); return; }
     var sel = window.getSelection();
     if (sel && !sel.isCollapsed) return;
+    if (extending) {
+      // Edge taps still turn pages so you can navigate to the end point.
+      if (PAGED) {
+        var ex = event.clientX / window.innerWidth;
+        if (ex < 0.18) { turnPage(-1); return; }
+        if (ex > 0.82) { turnPage(1); return; }
+      }
+      var eoff = pointToOffset(event.clientX, event.clientY);
+      if (eoff != null && eoff !== anchorOffset) {
+        var lo = Math.min(anchorOffset, eoff), hi = Math.max(anchorOffset, eoff);
+        var text = extendPreview(anchorOffset, eoff);
+        post({ type: 'extendPoint', start: lo, end: hi, text: text });
+      }
+      return;
+    }
     if (PAGED) {
       var x = event.clientX / window.innerWidth;
       if (x < 0.18) { turnPage(-1); return; }
@@ -367,6 +426,17 @@ ${paragraphsHtml}
         parent.removeChild(mark);
         parent.normalize();
       });
+    },
+    beginExtend: function (anchor) {
+      var sel = window.getSelection();
+      if (sel) sel.removeAllRanges();
+      extending = true;
+      anchorOffset = anchor;
+      if (window.CSS && CSS.highlights) CSS.highlights.delete('inkread-extend');
+    },
+    endExtend: function () {
+      extending = false;
+      if (window.CSS && CSS.highlights) CSS.highlights.delete('inkread-extend');
     },
   };
 
