@@ -89,9 +89,44 @@ export function Reader({
   const [chapterIndex, setChapterIndex] = useState(
     Math.min(initialPosition?.chapterIndex ?? 0, chapters.length - 1),
   );
-  const [theme, setTheme] = useState<ReaderTheme>(
+  const [themeMode, setThemeMode] = useState<'fixed' | 'auto'>(
+    (initialPreferences?.themeMode as 'fixed' | 'auto') ?? 'fixed',
+  );
+  const [fixedTheme, setFixedTheme] = useState<ReaderTheme>(
     (initialPreferences?.theme as ReaderTheme) ?? 'paper',
   );
+  const [lightChoice, setLightChoice] = useState<ReaderTheme>(
+    (initialPreferences?.lightTheme as ReaderTheme) ?? 'paper',
+  );
+  const [darkChoice, setDarkChoice] = useState<ReaderTheme>(
+    (initialPreferences?.darkTheme as ReaderTheme) ?? 'night',
+  );
+  const [systemDark, setSystemDark] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia('(prefers-color-scheme: dark)');
+    setSystemDark(mq.matches);
+    const onChange = (e: MediaQueryListEvent) => setSystemDark(e.matches);
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+  const theme: ReaderTheme =
+    themeMode === 'auto' ? (systemDark ? darkChoice : lightChoice) : fixedTheme;
+  const isDarkTheme = (t: ReaderTheme) => t === 'night' || t === 'midnight' || t === 'dark';
+  const chooseTheme = (key: ReaderTheme) => {
+    if (isDarkTheme(key)) setDarkChoice(key);
+    else setLightChoice(key);
+    if (themeMode === 'fixed') setFixedTheme(key);
+  };
+  const toggleAutoTheme = () => {
+    if (themeMode === 'auto') {
+      setFixedTheme(theme);
+      setThemeMode('fixed');
+    } else {
+      if (isDarkTheme(fixedTheme)) setDarkChoice(fixedTheme);
+      else setLightChoice(fixedTheme);
+      setThemeMode('auto');
+    }
+  };
   const [fontSize, setFontSize] = useState(initialPreferences?.fontSize ?? DEFAULT_FONT_SIZE);
   const [pagination, setPagination] = useState<'scroll' | 'paged'>(
     initialPreferences?.pagination ?? 'scroll',
@@ -103,7 +138,10 @@ export function Reader({
   const [themeOpen, setThemeOpen] = useState(false);
   const [layoutOpen, setLayoutOpen] = useState(false);
   const [typeOpen, setTypeOpen] = useState(false);
-  const [noteDraft, setNoteDraft] = useState<string>();
+  const [noteEditor, setNoteEditor] = useState<
+    { passage: string; draft: string; annotationId?: string } | undefined
+  >();
+  const [acting, setActing] = useState<Annotation | undefined>();
   const [ttsOpen, setTtsOpen] = useState(false);
   const [ttsPlaying, setTtsPlaying] = useState(false);
   const [rate, setRate] = useState(initialPreferences?.ttsRate ?? 1.0);
@@ -125,10 +163,19 @@ export function Reader({
       void fetch('/api/preferences', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ theme, fontSize, pagination, ttsRate: rate, ttsVoice: voice }),
+        body: JSON.stringify({
+          theme: fixedTheme,
+          themeMode,
+          lightTheme: lightChoice,
+          darkTheme: darkChoice,
+          fontSize,
+          pagination,
+          ttsRate: rate,
+          ttsVoice: voice,
+        }),
       });
     }, 600);
-  }, [theme, fontSize, pagination, rate, voice]);
+  }, [fixedTheme, themeMode, lightChoice, darkChoice, fontSize, pagination, rate, voice]);
 
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const offsetRef = useRef(initialPosition?.offset ?? 0);
@@ -297,11 +344,7 @@ export function Reader({
           break;
         case 'tapHighlight': {
           const annotation = annotations.find((a) => a.id === msg.id);
-          if (annotation && confirm(`Remove this ${annotation.note ? 'note' : 'highlight'}?\n\n“${annotation.passage.slice(0, 140)}”`)) {
-            void fetch(`/api/annotations/${annotation.id}`, { method: 'DELETE' }).then(
-              reloadAnnotations,
-            );
-          }
+          if (annotation) setActing(annotation);
           break;
         }
         case 'pageEdge':
@@ -399,6 +442,13 @@ export function Reader({
   if (!chapter) return null;
 
   const chrome = THEME_PREVIEWS.find((preview) => preview.key === theme)!;
+  const themeColors = READER_THEMES[theme];
+  const panelStyle = {
+    background: themeColors.bg,
+    color: themeColors.fg,
+    borderColor: `color-mix(in srgb, ${themeColors.fg} 16%, transparent)`,
+  };
+  const mutedColor = `color-mix(in srgb, ${themeColors.fg} 60%, transparent)`;
   // Chrome controls sit quietly on the page color until hovered — the whole
   // window reads as one book page.
   const chromeButton =
@@ -495,29 +545,75 @@ export function Reader({
         ) : null}
 
         {themeOpen ? (
-          <div className="absolute right-4 top-2 z-20 w-56 rounded-xl border border-[#e6dfd4] bg-white p-2 text-[#26221c] shadow-lg">
-            {THEME_PREVIEWS.map((preview) => (
-              <button
-                key={preview.key}
-                onClick={() => {
-                  setTheme(preview.key);
-                  setThemeOpen(false);
-                }}
-                className={`mb-1 flex w-full items-center gap-3 rounded-lg border px-3 py-2 text-left text-sm transition hover:border-[#8b5e3c] ${
-                  theme === preview.key ? 'border-[#8b5e3c]' : 'border-transparent'
+          <div className="absolute right-4 top-2 z-20 w-60 rounded-xl border border-[#e6dfd4] bg-white p-2 text-[#26221c] shadow-lg">
+            <button
+              onClick={toggleAutoTheme}
+              className={`mb-2 flex w-full items-center justify-between rounded-lg border px-3 py-2 text-left text-sm transition hover:border-[#8b5e3c] ${
+                themeMode === 'auto' ? 'border-[#8b5e3c]' : 'border-transparent'
+              }`}
+            >
+              <span className={themeMode === 'auto' ? 'font-bold text-[#8b5e3c]' : ''}>
+                Follow system
+              </span>
+              <span
+                className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
+                  themeMode === 'auto' ? 'bg-[#8b5e3c] text-white' : 'bg-[#f0e6da] text-[#6b6459]'
                 }`}
               >
-                <span
-                  className="flex h-9 w-14 shrink-0 items-center justify-center rounded-md border border-black/10 font-serif text-xs"
-                  style={{ background: preview.bg, color: preview.fg }}
+                {themeMode === 'auto' ? 'On' : 'Off'}
+              </span>
+            </button>
+            {THEME_PREVIEWS.map((preview) => {
+              const active = theme === preview.key;
+              const otherPick =
+                themeMode === 'auto' &&
+                !active &&
+                (preview.key === lightChoice || preview.key === darkChoice);
+              return (
+                <button
+                  key={preview.key}
+                  onClick={() => {
+                    chooseTheme(preview.key);
+                    if (themeMode === 'fixed') setThemeOpen(false);
+                  }}
+                  className={`mb-1 flex w-full items-center gap-3 rounded-lg border px-3 py-2 text-left text-sm transition hover:border-[#8b5e3c] ${
+                    active
+                      ? 'border-[#8b5e3c]'
+                      : otherPick
+                        ? 'border-[#8b5e3c]/40'
+                        : 'border-transparent'
+                  }`}
                 >
-                  Aa
-                </span>
-                <span className={theme === preview.key ? 'font-bold text-[#8b5e3c]' : ''}>
-                  {preview.label}
-                </span>
-              </button>
-            ))}
+                  <span
+                    className="flex h-9 w-14 shrink-0 items-center justify-center rounded-md border border-black/10 font-serif text-xs"
+                    style={{ background: preview.bg, color: preview.fg }}
+                  >
+                    Aa
+                  </span>
+                  <span
+                    className={
+                      active
+                        ? 'font-bold text-[#8b5e3c]'
+                        : otherPick
+                          ? 'text-[#8b5e3c]/70'
+                          : ''
+                    }
+                  >
+                    {preview.label}
+                  </span>
+                  {otherPick ? (
+                    <span className="ml-auto text-xs text-[#6b6459]">
+                      {isDarkTheme(preview.key) ? 'dark' : 'light'}
+                    </span>
+                  ) : null}
+                </button>
+              );
+            })}
+            {themeMode === 'auto' ? (
+              <p className="px-3 pt-1 text-xs text-[#6b6459]">
+                Following your system — {systemDark ? 'dark' : 'light'} now.
+              </p>
+            ) : null}
           </div>
         ) : null}
 
@@ -616,7 +712,10 @@ export function Reader({
         ) : null}
 
         {selection ? (
-          <div className="absolute bottom-16 left-1/2 z-10 flex -translate-x-1/2 items-center gap-3 rounded-full bg-white px-5 py-2.5 text-[#26221c] shadow-xl ring-1 ring-[#e6dfd4]">
+          <div
+            className="absolute bottom-16 left-1/2 z-10 flex -translate-x-1/2 items-center gap-3 rounded-full border px-5 py-2.5 shadow-xl"
+            style={panelStyle}
+          >
             {(Object.keys(HIGHLIGHT_COLORS) as HighlightColor[]).map((color) => (
               <button
                 key={color}
@@ -627,48 +726,130 @@ export function Reader({
               />
             ))}
             <button
-              onClick={() => setNoteDraft('')}
-              className="rounded-lg px-2 py-1 text-sm font-semibold text-[#8b5e3c] transition hover:bg-[#f0e6da]"
+              onClick={() => selection && setNoteEditor({ passage: selection.text, draft: '' })}
+              className="rounded-lg px-2 py-1 text-sm font-semibold transition hover:opacity-70"
+              style={{ color: themeColors.accent }}
             >
               Note
             </button>
             <button
               onClick={() => void sharePassage()}
-              className="rounded-lg px-2 py-1 text-sm font-semibold text-[#8b5e3c] transition hover:bg-[#f0e6da]"
+              className="rounded-lg px-2 py-1 text-sm font-semibold transition hover:opacity-70"
+              style={{ color: themeColors.accent }}
             >
               {copied ? 'Copied ✓' : 'Copy'}
             </button>
           </div>
         ) : null}
 
-        {noteDraft !== undefined && selection ? (
-          <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/30 p-6">
-            <div className="w-full max-w-md rounded-2xl bg-white p-5 text-[#26221c] shadow-2xl">
-              <p className="max-h-20 overflow-hidden text-sm italic text-[#6b6459]">
-                “{selection.text.slice(0, 200)}”
+        {noteEditor ? (
+          <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/40 p-6">
+            <div className="w-full max-w-md rounded-2xl border p-5 shadow-2xl" style={panelStyle}>
+              <p className="max-h-20 overflow-hidden text-sm italic" style={{ color: mutedColor }}>
+                “{noteEditor.passage.slice(0, 200)}”
               </p>
               <textarea
                 autoFocus
-                value={noteDraft}
-                onChange={(e) => setNoteDraft(e.target.value)}
+                value={noteEditor.draft}
+                onChange={(e) =>
+                  setNoteEditor((prev) => (prev ? { ...prev, draft: e.target.value } : prev))
+                }
                 placeholder="Your note…"
                 rows={4}
-                className="mt-3 w-full resize-none rounded-lg border border-[#e6dfd4] p-3 text-sm outline-none focus:border-[#8b5e3c]"
+                className="mt-3 w-full resize-none rounded-lg border bg-transparent p-3 text-sm outline-none"
+                style={{ borderColor: panelStyle.borderColor, color: themeColors.fg }}
               />
               <div className="mt-3 flex justify-end gap-3 text-sm">
-                <button onClick={() => setNoteDraft(undefined)} className="px-3 py-2 text-[#6b6459]">
+                <button
+                  onClick={() => setNoteEditor(undefined)}
+                  className="px-3 py-2"
+                  style={{ color: mutedColor }}
+                >
                   Cancel
                 </button>
                 <button
                   onClick={() => {
-                    const note = noteDraft.trim();
-                    setNoteDraft(undefined);
-                    void addHighlight('yellow', note || undefined);
+                    const editor = noteEditor;
+                    const note = editor.draft.trim();
+                    setNoteEditor(undefined);
+                    if (editor.annotationId) {
+                      void fetch(`/api/annotations/${editor.annotationId}`, {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ note: note || null }),
+                      }).then(reloadAnnotations);
+                    } else {
+                      void addHighlight('yellow', note || undefined);
+                    }
                   }}
-                  className="rounded-full bg-[#8b5e3c] px-4 py-2 font-semibold text-white"
+                  className="rounded-full px-4 py-2 font-semibold"
+                  style={{ background: themeColors.accent, color: themeColors.bg }}
                 >
-                  Save note
+                  {noteEditor.annotationId ? 'Save' : 'Save note'}
                 </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {acting ? (
+          <div
+            className="absolute inset-0 z-30 flex items-center justify-center bg-black/40 p-6"
+            onClick={() => setActing(undefined)}
+          >
+            <div
+              className="w-full max-w-md rounded-2xl border p-5 shadow-2xl"
+              style={panelStyle}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <p className="max-h-28 overflow-hidden text-sm italic" style={{ color: mutedColor }}>
+                “{acting.passage.slice(0, 240)}”
+              </p>
+              {acting.note ? (
+                <p
+                  className="mt-3 whitespace-pre-wrap text-sm"
+                  style={{ color: themeColors.fg }}
+                >
+                  {acting.note}
+                </p>
+              ) : null}
+              <div className="mt-4 flex items-center justify-between text-sm">
+                <button
+                  onClick={() => {
+                    const id = acting.id;
+                    setActing(undefined);
+                    void fetch(`/api/annotations/${id}`, { method: 'DELETE' }).then(
+                      reloadAnnotations,
+                    );
+                  }}
+                  className="px-2 py-1 font-semibold"
+                  style={{ color: '#cf4f3e' }}
+                >
+                  Delete
+                </button>
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => setActing(undefined)}
+                    className="px-3 py-2"
+                    style={{ color: mutedColor }}
+                  >
+                    Close
+                  </button>
+                  <button
+                    onClick={() => {
+                      setNoteEditor({
+                        passage: acting.passage,
+                        draft: acting.note ?? '',
+                        annotationId: acting.id,
+                      });
+                      setActing(undefined);
+                    }}
+                    className="rounded-full px-4 py-2 font-semibold"
+                    style={{ background: themeColors.accent, color: themeColors.bg }}
+                  >
+                    {acting.note ? 'Edit note' : 'Add note'}
+                  </button>
+                </div>
               </div>
             </div>
           </div>
