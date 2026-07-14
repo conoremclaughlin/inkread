@@ -216,6 +216,7 @@ ${paragraphsHtml}
   // --- Cross-page selection: pick a start, flip pages, tap the end. ---
   var extending = false;
   var anchorOffset = 0;
+  var lastEnd = -1;
 
   function pointToOffset(x, y) {
     var node, off;
@@ -349,6 +350,18 @@ ${paragraphsHtml}
     post({ type: 'tap' });
   });
 
+  // Desktop: the pending highlight follows the cursor live while extending.
+  document.addEventListener('pointermove', function (event) {
+    if (!extending || event.pointerType === 'touch') return;
+    var off = pointToOffset(event.clientX, event.clientY);
+    if (off == null) return;
+    var text = extendPreview(anchorOffset, off);
+    if (off !== lastEnd) {
+      lastEnd = off;
+      post({ type: 'extendPoint', start: Math.min(anchorOffset, off), end: Math.max(anchorOffset, off), text: text });
+    }
+  });
+
   if (PAGED) {
     document.addEventListener('keydown', function (event) {
       if (event.key === 'ArrowRight' || event.key === ' ') { event.preventDefault(); turnPage(1); }
@@ -427,12 +440,13 @@ ${paragraphsHtml}
         parent.normalize();
       });
     },
-    beginExtend: function (anchor) {
+    beginExtend: function (start, end) {
       var sel = window.getSelection();
       if (sel) sel.removeAllRanges();
       extending = true;
-      anchorOffset = anchor;
-      if (window.CSS && CSS.highlights) CSS.highlights.delete('inkread-extend');
+      anchorOffset = start;
+      lastEnd = -1;
+      extendPreview(start, end); // keep the original selection visible as the range grows
     },
     endExtend: function () {
       extending = false;

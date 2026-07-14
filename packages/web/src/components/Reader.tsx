@@ -76,9 +76,15 @@ type ReaderBridge = {
   turnPage: (delta: number) => void;
   markSentence: (start: number, end: number) => void;
   clearSentence: () => void;
-  beginExtend: (anchor: number) => void;
+  beginExtend: (start: number, end: number) => void;
   endExtend: () => void;
 };
+
+/** Head … tail of a selection so a multi-page range is verifiable at a glance. */
+function rangePreview(text: string): string {
+  const s = text.replace(/\s+/g, ' ').trim();
+  return s.length <= 90 ? s : `${s.slice(0, 42)} … ${s.slice(-42)}`;
+}
 
 export function Reader({
   book,
@@ -261,6 +267,19 @@ export function Reader({
     setExtend(undefined);
   }, [chapterIndex]);
 
+  // Arrow keys turn pages even when focus is on the chrome (e.g. the extend bar).
+  useEffect(() => {
+    if (pagination !== 'paged') return;
+    const onKey = (event: KeyboardEvent) => {
+      const el = event.target as HTMLElement | null;
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) return;
+      if (event.key === 'ArrowRight') bridge()?.turnPage(1);
+      else if (event.key === 'ArrowLeft') bridge()?.turnPage(-1);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [pagination, bridge]);
+
   /**
    * First Listen: load Kokoro (neural, local, cached after first download);
    * fall back to the system voice if the model can't load here.
@@ -439,8 +458,12 @@ export function Reader({
   // Cross-page highlight: anchor at the selection, flip pages, tap the end.
   const startExtend = useCallback(() => {
     if (!selection) return;
-    setExtend({ anchor: selection.start, anchorText: selection.text });
-    bridge()?.beginExtend(selection.start);
+    setExtend({
+      anchor: selection.start,
+      anchorText: selection.text,
+      range: { start: selection.start, end: selection.end, text: selection.text },
+    });
+    bridge()?.beginExtend(selection.start, selection.end);
     setSelection(undefined);
   }, [bridge, selection]);
 
@@ -809,36 +832,46 @@ export function Reader({
 
         {extend ? (
           <div
-            className="absolute bottom-16 left-1/2 z-10 flex max-w-[92vw] -translate-x-1/2 items-center gap-3 rounded-full border px-5 py-2.5 shadow-xl"
+            className="absolute bottom-16 left-1/2 z-10 w-[min(92vw,32rem)] -translate-x-1/2 rounded-2xl border px-4 py-3 shadow-xl"
             style={panelStyle}
           >
-            {extend.range ? (
-              <>
-                <span className="text-sm" style={{ color: mutedColor }}>
-                  End set — pick a color
-                </span>
-                {(Object.keys(HIGHLIGHT_COLORS) as HighlightColor[]).map((color) => (
-                  <button
-                    key={color}
-                    aria-label={`Highlight ${color}`}
-                    onClick={() => void confirmExtend(color)}
-                    className="h-5 w-5 rounded-full ring-[#26221c]/25 ring-offset-1 transition hover:scale-110 hover:ring-2"
-                    style={{ background: `rgb(${HIGHLIGHT_COLORS[color]})` }}
-                  />
-                ))}
-              </>
-            ) : (
-              <span className="text-sm" style={{ color: mutedColor }}>
-                Turn the page, then tap where the highlight ends
-              </span>
-            )}
-            <button
-              onClick={cancelExtend}
-              className="rounded-lg px-2 py-1 text-sm font-semibold transition hover:opacity-70"
-              style={{ color: mutedColor }}
-            >
-              Cancel
-            </button>
+            <p className="mb-2 text-center text-xs italic" style={{ color: mutedColor }}>
+              {extend.range ? `“${rangePreview(extend.range.text)}”` : 'Point or tap where the highlight ends'}
+            </p>
+            <div className="flex items-center justify-center gap-2">
+              <button
+                onClick={() => bridge()?.turnPage(-1)}
+                aria-label="Previous page"
+                className="px-1 text-lg leading-none transition hover:opacity-70"
+                style={{ color: themeColors.accent }}
+              >
+                ‹
+              </button>
+              {(Object.keys(HIGHLIGHT_COLORS) as HighlightColor[]).map((color) => (
+                <button
+                  key={color}
+                  aria-label={`Highlight ${color}`}
+                  onClick={() => void confirmExtend(color)}
+                  className="h-5 w-5 rounded-full ring-[#26221c]/25 ring-offset-1 transition hover:scale-110 hover:ring-2"
+                  style={{ background: `rgb(${HIGHLIGHT_COLORS[color]})` }}
+                />
+              ))}
+              <button
+                onClick={() => bridge()?.turnPage(1)}
+                aria-label="Next page"
+                className="px-1 text-lg leading-none transition hover:opacity-70"
+                style={{ color: themeColors.accent }}
+              >
+                ›
+              </button>
+              <button
+                onClick={cancelExtend}
+                className="ml-1 rounded-lg px-2 py-1 text-sm font-semibold transition hover:opacity-70"
+                style={{ color: mutedColor }}
+              >
+                Cancel
+              </button>
+            </div>
           </div>
         ) : null}
 
