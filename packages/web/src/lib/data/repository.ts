@@ -34,6 +34,10 @@ export interface CreateAnnotationInput {
 /** Reader settings persisted per user; shape evolves freely (jsonb). */
 export interface ReaderPreferences {
   theme?: string;
+  /** 'auto' follows the OS light/dark setting via lightTheme/darkTheme. */
+  themeMode?: 'fixed' | 'auto';
+  lightTheme?: string;
+  darkTheme?: string;
   pagination?: 'scroll' | 'paged';
   fontSize?: number;
   ttsRate?: number;

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -11,34 +11,56 @@ import {
 import { useFocusEffect } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import * as DocumentPicker from 'expo-document-picker';
-import { File, Paths } from 'expo-file-system';
-import type { PdfPage } from '@inkread/core';
+import { File } from 'expo-file-system';
+import type { PdfPage, ReadingPosition } from '@inkread/core';
+import type { CachedBook } from '@inkread/client-store';
 import type { RootStackParamList } from '../navigation';
 import { SAMPLE_PDF_BASE64, SAMPLE_PDF_TITLE } from '../assets/samplePdf';
-import { AUTODEMO } from '../dev/autodemo';
-import { base64ToBytes, bytesToBase64 } from '../lib/base64';
+import { bytesToBase64 } from '../lib/base64';
+import { apiFetch } from '../lib/api';
+import { syncNow } from '../lib/sync';
 import { finishConversion } from '../convert/convertPdf';
 import { PdfExtractor, type PdfMeta } from '../pdf/PdfExtractor';
-import { deleteBook, getPosition, listBooks, type BookRecord } from '../store/db';
-import { deleteBookFiles } from '../store/files';
+import { getClientStore } from '../store/clientStore';
 import { colors, tintFor } from '../ui/theme';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Library'>;
 
 interface ImportJob {
   pdfBase64: string;
-  sourceUri: string;
   fileName: string;
   pagesDone: number;
   pageCount: number;
 }
 
 export function LibraryScreen({ navigation }: Props) {
-  const [books, setBooks] = useState<BookRecord[]>([]);
+  const [books, setBooks] = useState<CachedBook[]>([]);
+  const [positions, setPositions] = useState<Map<string, ReadingPosition>>(new Map());
   const [job, setJob] = useState<ImportJob | undefined>();
 
-  const reload = useCallback(() => setBooks(listBooks()), []);
-  useFocusEffect(reload);
+  const reload = useCallback(() => {
+    void (async () => {
+      const store = await getClientStore();
+      const list = await store.listBooks();
+      setBooks(list);
+      const entries = await Promise.all(
+        list.map(async (book): Promise<[string, ReadingPosition | undefined]> => [
+          book.id,
+          await store.getPosition(book.id),
+        ]),
+      );
+      setPositions(new Map(entries.filter((e): e is [string, ReadingPosition] => !!e[1])));
+    })();
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      reload();
+      void syncNow()
+        .then(reload)
+        .catch(() => undefined);
+    }, [reload]),
+  );
 
   const startImport = useCallback(async () => {
     const result = await DocumentPicker.getDocumentAsync({
@@ -51,7 +73,6 @@ export function LibraryScreen({ navigation }: Props) {
       const bytes = new File(asset.uri).bytesSync();
       setJob({
         pdfBase64: bytesToBase64(bytes),
-        sourceUri: asset.uri,
         fileName: asset.name.replace(/\.pdf$/i, ''),
         pagesDone: 0,
         pageCount: 0,
@@ -62,53 +83,43 @@ export function LibraryScreen({ navigation }: Props) {
   }, []);
 
   const startSampleImport = useCallback(() => {
-    const file = new File(Paths.cache, 'sample-book.pdf');
-    file.write(base64ToBytes(SAMPLE_PDF_BASE64));
     setJob({
       pdfBase64: SAMPLE_PDF_BASE64,
-      sourceUri: file.uri,
       fileName: SAMPLE_PDF_TITLE,
       pagesDone: 0,
       pageCount: 0,
     });
   }, []);
 
-  const autodemoRan = useRef(false);
-  useEffect(() => {
-    if (__DEV__ && AUTODEMO && !autodemoRan.current && listBooks().length === 0) {
-      autodemoRan.current = true;
-      console.log('[autodemo] importing sample book');
-      startSampleImport();
-    }
-  }, [startSampleImport]);
-
   const handleDone = useCallback(
     (pages: PdfPage[], meta: PdfMeta) => {
       const current = job;
       setJob(undefined);
       if (!current) return;
-      try {
-        const { book } = finishConversion(pages, meta, current.fileName, current.sourceUri);
-        reload();
-        navigation.navigate('Reader', { bookId: book.id, title: book.title });
-      } catch (error) {
-        Alert.alert('Conversion failed', String(error instanceof Error ? error.message : error));
-      }
+      void finishConversion(pages, meta, current.fileName)
+        .then(({ bookId, title }) => {
+          reload();
+          navigation.navigate('Reader', { bookId, title });
+        })
+        .catch((error) => {
+          Alert.alert('Conversion failed', String(error instanceof Error ? error.message : error));
+        });
     },
     [job, navigation, reload],
   );
 
   const confirmDelete = useCallback(
-    (book: BookRecord) => {
-      Alert.alert('Delete book', `Remove “${book.title}” and all its notes?`, [
+    (book: CachedBook) => {
+      Alert.alert('Delete book', `Remove “${book.title}” and all its notes? There is no undo.`, [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Delete',
           style: 'destructive',
           onPress: () => {
-            deleteBook(book.id);
-            deleteBookFiles(book.id);
-            reload();
+            void apiFetch(`/api/books/${book.id}`, { method: 'DELETE' })
+              .then(() => syncNow(true))
+              .then(reload)
+              .catch(() => Alert.alert('Delete failed', 'Check your connection and try again.'));
           },
         },
       ]);
@@ -117,10 +128,11 @@ export function LibraryScreen({ navigation }: Props) {
   );
 
   const renderBook = useCallback(
-    ({ item }: { item: BookRecord }) => {
-      const position = getPosition(item.id);
-      const progress = position
-        ? Math.round(((position.chapterIndex + 1) / Math.max(1, item.chapterCount)) * 100)
+    ({ item }: { item: CachedBook }) => {
+      const position = positions.get(item.id);
+      const marker = position?.furthest ?? position;
+      const progress = marker
+        ? Math.round(((marker.chapterIndex + 1) / Math.max(1, item.chapterCount)) * 100)
         : 0;
       return (
         <Pressable
@@ -135,7 +147,7 @@ export function LibraryScreen({ navigation }: Props) {
             </Text>
             {item.author ? <Text style={styles.author}>{item.author}</Text> : null}
             <Text style={styles.meta}>
-              {item.chapterCount} chapters{progress > 0 ? ` · ${progress}%` : ''}
+              {item.chapterCount} chapters{progress > 0 ? ` · ${progress}% read` : ''}
             </Text>
           </View>
           <Pressable
@@ -148,7 +160,7 @@ export function LibraryScreen({ navigation }: Props) {
         </Pressable>
       );
     },
-    [confirmDelete, navigation],
+    [confirmDelete, navigation, positions],
   );
 
   return (
@@ -163,7 +175,7 @@ export function LibraryScreen({ navigation }: Props) {
             <Text style={styles.emptyTitle}>Your library is empty</Text>
             <Text style={styles.emptyText}>
               Import a PDF and inkread will convert it into a clean, reflowable book you can read,
-              listen to, and annotate.
+              listen to, and annotate — synced across your devices.
             </Text>
             <Pressable style={styles.sampleButton} onPress={startSampleImport} disabled={!!job}>
               <Text style={styles.sampleButtonText}>Try a sample book</Text>

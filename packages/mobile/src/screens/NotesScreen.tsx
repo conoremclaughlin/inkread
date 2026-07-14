@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Alert,
   SectionList,
@@ -16,8 +16,11 @@ import {
   type Annotation,
 } from '@inkread/core';
 import type { RootStackParamList } from '../navigation';
-import { deleteAnnotation, getBook, listAnnotations } from '../store/db';
-import { epubFile, writeShareFile } from '../store/files';
+import { buildEpub } from '@inkread/core';
+import { File, Paths } from 'expo-file-system';
+import type { CachedBook } from '@inkread/client-store';
+import { getClientStore } from '../store/clientStore';
+import { deleteAnnotation, refreshAnnotations } from '../lib/libraryData';
 import { colors } from '../ui/theme';
 import { HIGHLIGHT_COLORS } from '@inkread/core';
 
@@ -30,8 +33,16 @@ interface NoteSection {
 
 export function NotesScreen({ route }: Props) {
   const { bookId } = route.params;
-  const book = useMemo(() => getBook(bookId), [bookId]);
-  const [annotations, setAnnotations] = useState<Annotation[]>(() => listAnnotations(bookId));
+  const [book, setBook] = useState<CachedBook>();
+  const [annotations, setAnnotations] = useState<Annotation[]>([]);
+
+  useEffect(() => {
+    void getClientStore().then(async (store) => {
+      setBook(await store.getBook(bookId));
+      setAnnotations(await store.listAnnotations(bookId));
+      void refreshAnnotations(bookId).then(setAnnotations);
+    });
+  }, [bookId]);
 
   const sections = useMemo<NoteSection[]>(() => {
     const byChapter = new Map<number, NoteSection>();
@@ -54,7 +65,9 @@ export function NotesScreen({ route }: Props) {
     if (!book) return;
     const markdown = exportAnnotationsMarkdown(book, annotations);
     const safeName = book.title.replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '-');
-    const file = writeShareFile(`${safeName || 'notes'}.md`, markdown);
+    const file = new File(Paths.cache, `${safeName || 'notes'}.md`);
+    if (file.exists) file.delete();
+    file.write(markdown);
     if (await Sharing.isAvailableAsync()) {
       await Sharing.shareAsync(file.uri, { mimeType: 'text/markdown', UTI: 'net.daringfireball.markdown' });
     } else {
@@ -63,15 +76,29 @@ export function NotesScreen({ route }: Props) {
   }, [annotations, book]);
 
   const shareEpub = useCallback(async () => {
-    const file = epubFile(bookId);
-    if (!file.exists) {
-      Alert.alert('No EPUB', 'This book has no generated EPUB file.');
+    if (!book) return;
+    const store = await getClientStore();
+    const chapters = await store.getChapters(bookId);
+    if (chapters.length === 0) {
+      Alert.alert('No content', 'This book has no cached chapters yet.');
       return;
     }
+    const epub = buildEpub({
+      title: book.title,
+      author: book.author,
+      language: book.language,
+      identifier: `urn:inkread:${book.id}`,
+      modified: new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'),
+      chapters,
+    });
+    const safeName = book.title.replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '-') || 'book';
+    const file = new File(Paths.cache, `${safeName}.epub`);
+    if (file.exists) file.delete();
+    file.write(epub);
     if (await Sharing.isAvailableAsync()) {
       await Sharing.shareAsync(file.uri, { mimeType: 'application/epub+zip', UTI: 'org.idpf.epub-container' });
     }
-  }, [bookId]);
+  }, [book, bookId]);
 
   const handleLongPress = useCallback(
     (annotation: Annotation) => {
@@ -81,8 +108,10 @@ export function NotesScreen({ route }: Props) {
           text: 'Remove',
           style: 'destructive',
           onPress: () => {
-            deleteAnnotation(annotation.id);
-            setAnnotations(listAnnotations(bookId));
+            void deleteAnnotation(annotation.id)
+              .then(() => refreshAnnotations(bookId))
+              .then(setAnnotations)
+              .catch((error) => Alert.alert('Could not delete', String(error.message ?? error)));
           },
         },
       ]);

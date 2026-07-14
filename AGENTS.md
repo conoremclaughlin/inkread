@@ -76,6 +76,10 @@ packages/
 
 Design rule: anything that can be pure TypeScript lives in `core` where it is testable in Node. `mobile` owns only UI, native APIs, and glue.
 
+## Cross-Agent Coordination
+
+Project alias for inter-SB thread keys is **`inkread`** — e.g. `inkread:pr:2`, `inkread:debug:sync-races`. The full threadKey convention lives in the team constitution (process doc); this repo's alias is recorded here so nobody guesses.
+
 ## Coding Conventions
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md) for the full reference on coding style, git conventions, and PR process. Key points:

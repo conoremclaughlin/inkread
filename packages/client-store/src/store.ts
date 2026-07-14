@@ -8,7 +8,7 @@ export interface CachedBook {
   title: string;
   author?: string;
   language: string;
-  source: string;
+  source: 'pdf' | 'epub' | 'text';
   chapterCount: number;
   createdAt: string;
   updatedAt: string;
@@ -116,7 +116,7 @@ export class ClientStore {
       title: row.title,
       author: row.author ?? undefined,
       language: row.language,
-      source: row.source,
+      source: row.source as CachedBook['source'],
       chapterCount: row.chapter_count,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
