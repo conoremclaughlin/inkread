@@ -1971,7 +1971,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@inkread/desktop@workspace:packages/desktop"
   dependencies:
-    electron: "npm:^38.0.0"
+    electron: "npm:^39.8.5"
   languageName: unknown
   linkType: soft
 
@@ -4989,16 +4989,16 @@ __metadata:
   languageName: node
   linkType: hard
 
-"electron@npm:^38.0.0":
-  version: 38.8.6
-  resolution: "electron@npm:38.8.6"
+"electron@npm:^39.8.5":
+  version: 39.8.5
+  resolution: "electron@npm:39.8.5"
   dependencies:
     "@electron/get": "npm:^2.0.0"
     "@types/node": "npm:^22.7.7"
     extract-zip: "npm:^2.0.1"
   bin:
     electron: cli.js
-  checksum: 10/6de96860a9fff1507858dd5c59d2c1bc771f4d97770c527646a0a22d3e12527d27ac40b27d7fbaa64d0b7ca73cb13b29d809d0dd6c67f7925f85953df38d46bf
+  checksum: 10/2cb90b9fcb8efbf434ee45a358623145ed0a59e820ddce778f17265a55d46e7aa6e5ddc245da1a4fc687ea86ff3c53d83aeb153fc48ba626f7de7643a1227f74
   languageName: node
   linkType: hard
 
