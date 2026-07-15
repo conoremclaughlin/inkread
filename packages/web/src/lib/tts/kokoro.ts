@@ -131,7 +131,7 @@ export class KokoroTtsController {
   }
 
   play(): void {
-    if (this.sentences.length === 0) return;
+    if (this.sentences.length === 0 || this.playing) return;
     this.playing = true;
     void this.speakCurrent();
     this.notify();
@@ -239,8 +239,12 @@ export class KokoroTtsController {
       // Free memory behind us; long chapters would otherwise accumulate PCM.
       this.buffers.delete(this.index - 2);
       this.index += 1;
+      // Reflect the advance immediately while the next buffer loads. When we
+      // run off the end, speakCurrent's terminal branch is the *sole* notifier
+      // so the chapter-advance edge (finished, no sentence) fires exactly once
+      // — otherwise a functional setChapterIndex would advance twice.
+      if (this.index < this.sentences.length) this.notify();
       void this.speakCurrent();
-      this.notify();
     };
     this.source = source;
     source.start();
