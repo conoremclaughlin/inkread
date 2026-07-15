@@ -167,6 +167,20 @@ describe('KokoroTtsController', () => {
     expect(MockSourceNode.instances[1]!.started).toBe(true);
   });
 
+  it('ignores play() while already playing so no second voice starts', async () => {
+    const controller = await readyController();
+    controller.load(TEXT);
+    controller.play();
+    await tick();
+    const first = lastWorker().posted.find((m) => m.type === 'generate' && m.text === 'First sentence.')!;
+    emitAudioFor(first.id as number);
+    await tick();
+    expect(MockSourceNode.instances).toHaveLength(1);
+    controller.play(); // pressing play again must be a no-op, not a parallel source
+    await tick();
+    expect(MockSourceNode.instances).toHaveLength(1);
+  });
+
   it('does not resume playback that was stopped mid-generation', async () => {
     const controller = await readyController();
     controller.load(TEXT);

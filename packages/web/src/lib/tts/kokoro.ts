@@ -131,7 +131,7 @@ export class KokoroTtsController {
   }
 
   play(): void {
-    if (this.sentences.length === 0) return;
+    if (this.sentences.length === 0 || this.playing) return;
     this.playing = true;
     void this.speakCurrent();
     this.notify();

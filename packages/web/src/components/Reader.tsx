@@ -192,6 +192,7 @@ export function Reader({
   const offsetRef = useRef(initialPosition?.offset ?? 0);
   const [furthest, setFurthest] = useState(initialPosition?.furthest);
   const ttsRef = useRef<TtsPlayer | null>(null);
+  const ttsInit = useRef<Promise<TtsPlayer> | null>(null);
   const [ttsEngine, setTtsEngine] = useState<TtsEngine>();
   const [ttsProgress, setTtsProgress] = useState<number>();
   const saveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -286,31 +287,54 @@ export function Reader({
    */
   const getTts = useCallback(async (): Promise<TtsPlayer> => {
     if (ttsRef.current) return ttsRef.current;
-    let player: TtsPlayer;
-    try {
-      const kokoro = new KokoroTtsController();
-      setTtsProgress(0);
-      await kokoro.init((progress) => setTtsProgress(progress));
-      kokoro.setVoice(voiceRef.current);
-      player = kokoro;
-      setTtsEngine('kokoro');
-      if (!offline && !initialPreferences?.ttsUsed) {
-        void fetch('/api/preferences', {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ttsUsed: true }),
-        }).catch(() => undefined);
+    // Coalesce concurrent callers (background preload + a Listen click) onto a
+    // single init, so exactly one controller is ever created and stored.
+    if (ttsInit.current) return ttsInit.current;
+    ttsInit.current = (async (): Promise<TtsPlayer> => {
+      let player: TtsPlayer;
+      try {
+        const kokoro = new KokoroTtsController();
+        setTtsProgress(0);
+        await kokoro.init((progress) => setTtsProgress(progress));
+        kokoro.setVoice(voiceRef.current);
+        player = kokoro;
+        setTtsEngine('kokoro');
+        if (!offline && !initialPreferences?.ttsUsed) {
+          void fetch('/api/preferences', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ttsUsed: true }),
+          }).catch(() => undefined);
+        }
+      } catch (error) {
+        console.warn('Kokoro TTS unavailable, using system voice:', error);
+        player = new WebTtsController();
+        setTtsEngine('system');
       }
-    } catch (error) {
-      console.warn('Kokoro TTS unavailable, using system voice:', error);
-      player = new WebTtsController();
-      setTtsEngine('system');
+      setTtsProgress(undefined);
+      ttsRef.current = player;
+      attachTtsListener(player);
+      return player;
+    })();
+    try {
+      return await ttsInit.current;
+    } finally {
+      ttsInit.current = null;
     }
-    setTtsProgress(undefined);
-    ttsRef.current = player;
-    attachTtsListener(player);
-    return player;
   }, [attachTtsListener]);
+
+  // Fully stop and drop the TTS engine (leaving the reader, or navigating away).
+  const teardownTts = useCallback(() => {
+    const tts = ttsRef.current;
+    ttsRef.current = null;
+    ttsInit.current = null;
+    if (!tts) return;
+    tts.setListener(undefined);
+    if ('destroy' in tts) tts.destroy();
+    else tts.stop();
+    setTtsOpen(false);
+    setTtsPlaying(false);
+  }, []);
 
   const savePosition = useCallback(
     (offset: number) => {
@@ -416,14 +440,8 @@ export function Reader({
 
   // Tear down whichever TTS engine is live when leaving the reader.
   useEffect(() => {
-    return () => {
-      const tts = ttsRef.current;
-      if (!tts) return;
-      tts.setListener(undefined);
-      if ('destroy' in tts) tts.destroy();
-      else tts.stop();
-    };
-  }, []);
+    return () => teardownTts();
+  }, [teardownTts]);
 
   const createHighlight = useCallback(
     async (start: number, end: number, passage: string, color: HighlightColor, note?: string) => {
@@ -559,7 +577,7 @@ export function Reader({
         }`}
       >
         <div className="flex min-w-0 items-stretch">
-          <Link href="/" className={`${chromeButton} shrink-0 font-medium`}>
+          <Link href="/" onClick={teardownTts} className={`${chromeButton} shrink-0 font-medium`}>
             ← Library
           </Link>
           <span className="flex items-center truncate px-1.5 font-semibold opacity-80">
@@ -592,7 +610,7 @@ export function Reader({
           >
             {ttsOpen ? 'Stop' : 'Listen'}
           </button>
-          <Link href={`/notes/${book.id}`} className={chromeButton}>
+          <Link href={`/notes/${book.id}`} onClick={teardownTts} className={chromeButton}>
             Notes
           </Link>
         </div>
