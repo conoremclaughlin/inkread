@@ -124,6 +124,9 @@ function ReaderInner({
   const restoreOffsetRef = useRef(initialPosition?.offset ?? 0);
   const ttsRef = useRef<TtsController | undefined>(undefined);
   const autoAdvanceRef = useRef(false);
+  // Guards against a doubled "finished" notification advancing two chapters at
+  // once; reset each time a chapter's queue is (re)loaded below.
+  const ttsAdvancingRef = useRef(false);
   const ttsStaleRef = useRef(false);
 
   const chapter = chapters[chapterIndex];
@@ -167,10 +170,20 @@ function ReaderInner({
           `window.__reader && window.__reader.markSentence(${status.sentence.start}, ${status.sentence.end});true;`,
         );
       }
-      if (status.playing && !status.sentence && tts.finished) {
-        // Ran off the end of the chapter → advance and keep reading.
-        autoAdvanceRef.current = true;
-        setChapterIndex((index) => Math.min(index + 1, chapters.length - 1));
+      // Ran off the end of the chapter → advance and keep reading. Note the
+      // terminal notification carries playing:false (speakCurrent clears it),
+      // so this must not require status.playing.
+      if (!status.sentence && tts.finished && status.totalSentences > 0) {
+        if (ttsAdvancingRef.current) return;
+        ttsAdvancingRef.current = true;
+        setChapterIndex((index) => {
+          if (index + 1 >= chapters.length) {
+            ttsAdvancingRef.current = false;
+            return index;
+          }
+          autoAdvanceRef.current = true;
+          return index + 1;
+        });
       }
     });
     return () => {
@@ -187,6 +200,7 @@ function ReaderInner({
         ? Math.max(0, chapterText.length - 1)
         : restoreOffsetRef.current;
     ttsStaleRef.current = false;
+    ttsAdvancingRef.current = false;
     if (autoAdvanceRef.current && chapterIndex < chapters.length) {
       autoAdvanceRef.current = false;
       tts.load(chapterText, 0);
