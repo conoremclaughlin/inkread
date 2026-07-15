@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import Link from 'next/link';
 import {
   buildReaderHtml,
@@ -520,7 +520,6 @@ export function Reader({
 
   if (!chapter) return null;
 
-  const chrome = THEME_PREVIEWS.find((preview) => preview.key === theme)!;
   const themeColors = READER_THEMES[theme];
   const panelStyle = {
     background: themeColors.bg,
@@ -528,6 +527,15 @@ export function Reader({
     borderColor: `color-mix(in srgb, ${themeColors.fg} 16%, transparent)`,
   };
   const mutedColor = `color-mix(in srgb, ${themeColors.fg} 60%, transparent)`;
+  // Exposed as CSS vars on the shell so every popover inherits the active theme.
+  const panelVars: Record<string, string> = {
+    '--panel-bg': themeColors.bg,
+    '--panel-fg': themeColors.fg,
+    '--panel-muted': mutedColor,
+    '--panel-border': `color-mix(in srgb, ${themeColors.fg} 16%, transparent)`,
+    '--panel-accent': themeColors.accent,
+    '--panel-accent-soft': `color-mix(in srgb, ${themeColors.accent} 18%, transparent)`,
+  };
   // Chrome controls sit quietly on the page color until hovered — the whole
   // window reads as one book page.
   const chromeButton =
@@ -543,10 +551,10 @@ export function Reader({
   return (
     <div
       className="relative flex h-screen flex-col transition-colors"
-      style={{ background: chrome.bg, color: chrome.fg }}
+      style={{ background: themeColors.bg, color: themeColors.fg, ...panelVars } as CSSProperties}
     >
       <header
-        className={`flex h-12 shrink-0 items-stretch justify-between text-sm ${
+        className={`flex h-12 shrink-0 select-none items-stretch justify-between text-sm ${
           isElectron ? 'electron-drag pl-20' : 'pl-2'
         }`}
       >
@@ -608,13 +616,13 @@ export function Reader({
         ) : null}
 
         {tocOpen ? (
-          <nav className="absolute right-4 top-2 z-20 max-h-[70%] w-72 overflow-auto rounded-xl border border-[#e6dfd4] bg-white p-2 text-[#26221c] shadow-lg">
+          <nav className="absolute right-4 top-2 z-20 max-h-[70%] w-72 overflow-auto rounded-xl border border-[var(--panel-border)] bg-[var(--panel-bg)] p-2 text-[var(--panel-fg)] shadow-lg">
             {chapters.map((c, i) => (
               <button
                 key={i}
                 onClick={() => goToChapter(i)}
                 className={`block w-full truncate rounded-lg px-3 py-2 text-left text-sm hover:bg-[#faf7f2] ${
-                  i === chapterIndex ? 'font-bold text-[#8b5e3c]' : ''
+                  i === chapterIndex ? 'font-bold text-[var(--panel-accent)]' : ''
                 }`}
               >
                 {c.title}
@@ -624,19 +632,19 @@ export function Reader({
         ) : null}
 
         {themeOpen ? (
-          <div className="absolute right-4 top-2 z-20 w-60 rounded-xl border border-[#e6dfd4] bg-white p-2 text-[#26221c] shadow-lg">
+          <div className="absolute right-4 top-2 z-20 w-60 rounded-xl border border-[var(--panel-border)] bg-[var(--panel-bg)] p-2 text-[var(--panel-fg)] shadow-lg">
             <button
               onClick={toggleAutoTheme}
-              className={`mb-2 flex w-full items-center justify-between rounded-lg border px-3 py-2 text-left text-sm transition hover:border-[#8b5e3c] ${
-                themeMode === 'auto' ? 'border-[#8b5e3c]' : 'border-transparent'
+              className={`mb-2 flex w-full items-center justify-between rounded-lg border px-3 py-2 text-left text-sm transition hover:border-[var(--panel-accent)] ${
+                themeMode === 'auto' ? 'border-[var(--panel-accent)]' : 'border-transparent'
               }`}
             >
-              <span className={themeMode === 'auto' ? 'font-bold text-[#8b5e3c]' : ''}>
+              <span className={themeMode === 'auto' ? 'font-bold text-[var(--panel-accent)]' : ''}>
                 Follow system
               </span>
               <span
                 className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
-                  themeMode === 'auto' ? 'bg-[#8b5e3c] text-white' : 'bg-[#f0e6da] text-[#6b6459]'
+                  themeMode === 'auto' ? 'bg-[var(--panel-accent)] text-[var(--panel-bg)]' : 'bg-[var(--panel-accent-soft)] text-[var(--panel-muted)]'
                 }`}
               >
                 {themeMode === 'auto' ? 'On' : 'Off'}
@@ -655,11 +663,11 @@ export function Reader({
                     chooseTheme(preview.key);
                     if (themeMode === 'fixed') setThemeOpen(false);
                   }}
-                  className={`mb-1 flex w-full items-center gap-3 rounded-lg border px-3 py-2 text-left text-sm transition hover:border-[#8b5e3c] ${
+                  className={`mb-1 flex w-full items-center gap-3 rounded-lg border px-3 py-2 text-left text-sm transition hover:border-[var(--panel-accent)] ${
                     active
-                      ? 'border-[#8b5e3c]'
+                      ? 'border-[var(--panel-accent)]'
                       : otherPick
-                        ? 'border-[#8b5e3c]/40'
+                        ? 'border-[var(--panel-accent)]/40'
                         : 'border-transparent'
                   }`}
                 >
@@ -672,16 +680,16 @@ export function Reader({
                   <span
                     className={
                       active
-                        ? 'font-bold text-[#8b5e3c]'
+                        ? 'font-bold text-[var(--panel-accent)]'
                         : otherPick
-                          ? 'text-[#8b5e3c]/70'
+                          ? 'text-[var(--panel-accent)]/70'
                           : ''
                     }
                   >
                     {preview.label}
                   </span>
                   {otherPick ? (
-                    <span className="ml-auto text-xs text-[#6b6459]">
+                    <span className="ml-auto text-xs text-[var(--panel-muted)]">
                       {isDarkTheme(preview.key) ? 'dark' : 'light'}
                     </span>
                   ) : null}
@@ -689,7 +697,7 @@ export function Reader({
               );
             })}
             {themeMode === 'auto' ? (
-              <p className="px-3 pt-1 text-xs text-[#6b6459]">
+              <p className="px-3 pt-1 text-xs text-[var(--panel-muted)]">
                 Following your system — {systemDark ? 'dark' : 'light'} now.
               </p>
             ) : null}
@@ -697,7 +705,7 @@ export function Reader({
         ) : null}
 
         {layoutOpen ? (
-          <div className="absolute right-4 top-2 z-20 w-64 rounded-xl border border-[#e6dfd4] bg-white p-2 text-[#26221c] shadow-lg">
+          <div className="absolute right-4 top-2 z-20 w-64 rounded-xl border border-[var(--panel-border)] bg-[var(--panel-bg)] p-2 text-[var(--panel-fg)] shadow-lg">
             {(
               [
                 {
@@ -739,16 +747,16 @@ export function Reader({
                   setPagination(option.key);
                   setLayoutOpen(false);
                 }}
-                className={`mb-1 flex w-full items-center gap-3 rounded-lg border px-3 py-2 text-left text-sm transition hover:border-[#8b5e3c] ${
-                  pagination === option.key ? 'border-[#8b5e3c]' : 'border-transparent'
+                className={`mb-1 flex w-full items-center gap-3 rounded-lg border px-3 py-2 text-left text-sm transition hover:border-[var(--panel-accent)] ${
+                  pagination === option.key ? 'border-[var(--panel-accent)]' : 'border-transparent'
                 }`}
               >
-                <span className="shrink-0 text-[#6b6459]">{option.icon}</span>
+                <span className="shrink-0 text-[var(--panel-muted)]">{option.icon}</span>
                 <span>
-                  <span className={`block ${pagination === option.key ? 'font-bold text-[#8b5e3c]' : 'font-medium'}`}>
+                  <span className={`block ${pagination === option.key ? 'font-bold text-[var(--panel-accent)]' : 'font-medium'}`}>
                     {option.label}
                   </span>
-                  <span className="block text-xs text-[#6b6459]">{option.hint}</span>
+                  <span className="block text-xs text-[var(--panel-muted)]">{option.hint}</span>
                 </span>
               </button>
             ))}
@@ -756,15 +764,15 @@ export function Reader({
         ) : null}
 
         {typeOpen ? (
-          <div className="absolute right-4 top-2 z-20 w-64 rounded-xl border border-[#e6dfd4] bg-white p-4 text-[#26221c] shadow-lg">
+          <div className="absolute right-4 top-2 z-20 w-64 rounded-xl border border-[var(--panel-border)] bg-[var(--panel-bg)] p-4 text-[var(--panel-fg)] shadow-lg">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-bold uppercase tracking-wide text-[#6b6459]">
+              <span className="text-xs font-bold uppercase tracking-wide text-[var(--panel-muted)]">
                 Text size
               </span>
               {fontSize !== DEFAULT_FONT_SIZE ? (
                 <button
                   onClick={() => setFontSize(DEFAULT_FONT_SIZE)}
-                  className="text-xs font-medium text-[#8b5e3c]"
+                  className="text-xs font-medium text-[var(--panel-accent)]"
                 >
                   Reset
                 </button>
@@ -773,7 +781,7 @@ export function Reader({
             <div className="mt-3 flex items-center justify-between">
               <button
                 onClick={() => setFontSize((s) => Math.max(14, s - 1))}
-                className="flex h-10 w-16 items-center justify-center rounded-lg border border-[#e6dfd4] text-sm transition hover:border-[#8b5e3c]"
+                className="flex h-10 w-16 items-center justify-center rounded-lg border border-[var(--panel-border)] text-sm transition hover:border-[var(--panel-accent)]"
               >
                 A−
               </button>
@@ -782,7 +790,7 @@ export function Reader({
               </span>
               <button
                 onClick={() => setFontSize((s) => Math.min(26, s + 1))}
-                className="flex h-10 w-16 items-center justify-center rounded-lg border border-[#e6dfd4] text-lg transition hover:border-[#8b5e3c]"
+                className="flex h-10 w-16 items-center justify-center rounded-lg border border-[var(--panel-border)] text-lg transition hover:border-[var(--panel-accent)]"
               >
                 A+
               </button>
@@ -989,9 +997,9 @@ export function Reader({
         ) : null}
 
         {ttsOpen ? (
-          <div className="absolute bottom-16 right-6 z-10 flex items-center gap-4 rounded-full bg-white px-5 py-2.5 shadow-xl ring-1 ring-[#e6dfd4]">
+          <div className="absolute bottom-16 right-6 z-10 flex items-center gap-4 rounded-full bg-[var(--panel-bg)] px-5 py-2.5 shadow-xl ring-1 ring-[var(--panel-border)]">
             {ttsProgress !== undefined ? (
-              <span className="text-sm text-[#6b6459]">
+              <span className="text-sm text-[var(--panel-muted)]">
                 Preparing voice… {ttsProgress}%
               </span>
             ) : (
@@ -999,7 +1007,7 @@ export function Reader({
                 <button
                   aria-label="Previous sentence"
                   onClick={() => ttsRef.current?.previous()}
-                  className="p-1 text-[#6b6459] transition hover:text-[#26221c]"
+                  className="p-1 text-[var(--panel-muted)] transition hover:text-[var(--panel-fg)]"
                 >
                   <PlayerIcon d="M19 5 L9 12 L19 19 Z M7 5 v14" />
                 </button>
@@ -1020,7 +1028,7 @@ export function Reader({
                     }
                     tts.play();
                   }}
-                  className="p-1 text-[#8b5e3c] transition hover:opacity-75"
+                  className="p-1 text-[var(--panel-accent)] transition hover:opacity-75"
                 >
                   {ttsPlaying ? (
                     <PlayerIcon filled d="M7 5 h3.5 v14 H7 Z M13.5 5 H17 v14 h-3.5 Z" />
@@ -1031,11 +1039,11 @@ export function Reader({
                 <button
                   aria-label="Next sentence"
                   onClick={() => ttsRef.current?.next()}
-                  className="p-1 text-[#6b6459] transition hover:text-[#26221c]"
+                  className="p-1 text-[var(--panel-muted)] transition hover:text-[var(--panel-fg)]"
                 >
                   <PlayerIcon d="M5 5 L15 12 L5 19 Z M17 5 v14" />
                 </button>
-                <button onClick={cycleRate} className="p-1 text-sm font-bold text-[#6b6459]">
+                <button onClick={cycleRate} className="p-1 text-sm font-bold text-[var(--panel-muted)]">
                   {rate.toFixed(2).replace(/0$/, '')}×
                 </button>
                 {ttsEngine === 'kokoro' ? (
@@ -1048,7 +1056,7 @@ export function Reader({
                       const tts = ttsRef.current;
                       if (tts instanceof KokoroTtsController) tts.setVoice(e.target.value);
                     }}
-                    className="max-w-32 rounded-lg border border-[#e6dfd4] bg-transparent px-1.5 py-1 text-xs text-[#6b6459] outline-none"
+                    className="max-w-32 rounded-lg border border-[var(--panel-border)] bg-transparent px-1.5 py-1 text-xs text-[var(--panel-muted)] outline-none"
                   >
                     {KOKORO_VOICES.map((v) => (
                       <option key={v.id} value={v.id}>
@@ -1058,7 +1066,7 @@ export function Reader({
                   </select>
                 ) : null}
                 {ttsEngine === 'system' ? (
-                  <span className="text-xs text-[#6b6459]" title="Neural voice unavailable; using the system voice">
+                  <span className="text-xs text-[var(--panel-muted)]" title="Neural voice unavailable; using the system voice">
                     system voice
                   </span>
                 ) : null}
@@ -1075,13 +1083,13 @@ export function Reader({
             setSelection(undefined);
             setChapterIndex(furthest.chapterIndex);
           }}
-          className="absolute bottom-14 right-6 z-10 rounded-full bg-white px-4 py-2 text-xs font-semibold text-[#8b5e3c] shadow-lg ring-1 ring-[#e6dfd4] transition hover:bg-[#f0e6da]"
+          className="absolute bottom-14 right-6 z-10 rounded-full bg-[var(--panel-bg)] px-4 py-2 text-xs font-semibold text-[var(--panel-accent)] shadow-lg ring-1 ring-[var(--panel-border)] transition hover:bg-[var(--panel-accent-soft)]"
         >
           Resume at {chapters[furthest.chapterIndex]?.title ?? 'furthest point'} →
         </button>
       ) : null}
 
-      <footer className="flex h-10 shrink-0 items-stretch justify-between px-2 text-sm">
+      <footer className="flex h-10 shrink-0 select-none items-stretch justify-between px-2 text-sm">
         <button
           disabled={pagination === 'scroll' && chapterIndex === 0}
           onClick={() =>
