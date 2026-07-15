@@ -28,10 +28,11 @@
     "vitest": "^3.2.6"
   },
   "scripts": {
-    "start": "expo start",
-    "android": "expo start --android",
-    "ios": "expo start --ios",
-    "web": "expo start --web",
+    "start": "expo start --offline",
+    "start:online": "expo start",
+    "android": "expo start --offline --android",
+    "ios": "expo start --offline --ios",
+    "web": "expo start --offline --web",
     "test": "vitest run",
     "type-check": "tsc --noEmit",
     "postinstall": "node scripts/embed-pdfjs.mjs",
