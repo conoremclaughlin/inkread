@@ -104,8 +104,12 @@ export class WebTtsController {
     utterance.onend = () => {
       if (generation !== this.generation || !this.playing) return;
       this.index += 1;
+      const terminal = this.index >= this.sentences.length;
+      // speakCurrent notifies on the terminal branch; only reflect the advance
+      // here when there's a next sentence, so the chapter-advance edge fires
+      // exactly once (a functional setChapterIndex would otherwise skip ahead).
       this.speakCurrent();
-      this.notify();
+      if (!terminal) this.notify();
     };
     utterance.onerror = () => {
       if (generation !== this.generation) return;

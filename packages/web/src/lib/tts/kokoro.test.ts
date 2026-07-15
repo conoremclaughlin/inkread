@@ -181,6 +181,31 @@ describe('KokoroTtsController', () => {
     expect(MockSourceNode.instances).toHaveLength(1);
   });
 
+  it('emits exactly one finished notification when the last sentence ends', async () => {
+    const controller = await readyController();
+    const finishes: number[] = [];
+    controller.setListener((status) => {
+      // Mirror the reader's chapter-advance guard exactly.
+      if (status.finished && !status.sentence && status.totalSentences > 0) {
+        finishes.push(status.sentenceIndex);
+      }
+    });
+    // One-sentence text: the first sentence is also the last, so ending it runs
+    // the chapter off its end — the edge the reader turns into a chapter advance.
+    controller.load('Only sentence.');
+    controller.play();
+    await tick();
+    const only = lastWorker().posted.find(
+      (m) => m.type === 'generate' && m.text === 'Only sentence.',
+    )!;
+    emitAudioFor(only.id as number);
+    await tick();
+    MockSourceNode.instances[0]!.onended?.();
+    await tick();
+    // Not two — a doubled notification would advance the reader two chapters.
+    expect(finishes).toHaveLength(1);
+  });
+
   it('does not resume playback that was stopped mid-generation', async () => {
     const controller = await readyController();
     controller.load(TEXT);

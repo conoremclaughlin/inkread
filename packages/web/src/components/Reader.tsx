@@ -216,6 +216,9 @@ export function Reader({
 
   const ttsContinueRef = useRef(false);
   const ttsStaleRef = useRef(false);
+  // Guards against a doubled "finished" notification advancing two chapters at
+  // once; reset each time a chapter's queue is (re)loaded below.
+  const ttsAdvancingRef = useRef(false);
 
   const attachTtsListener = useCallback(
     (tts: TtsPlayer) => {
@@ -227,8 +230,13 @@ export function Reader({
         // Ran off the end of the chapter → flow into the next one; the
         // chapter-change effect below reloads the queue and resumes.
         if (!status.sentence && status.finished && status.totalSentences > 0) {
+          if (ttsAdvancingRef.current) return;
+          ttsAdvancingRef.current = true;
           setChapterIndex((index) => {
-            if (index + 1 >= chapters.length) return index;
+            if (index + 1 >= chapters.length) {
+              ttsAdvancingRef.current = false;
+              return index;
+            }
             ttsContinueRef.current = true;
             offsetRef.current = 0;
             return index + 1;
@@ -251,6 +259,7 @@ export function Reader({
   useEffect(() => {
     const tts = ttsRef.current;
     if (!tts || !ttsOpen) return;
+    ttsAdvancingRef.current = false;
     const resume = ttsContinueRef.current || tts.status.playing;
     ttsContinueRef.current = false;
     const offset =
