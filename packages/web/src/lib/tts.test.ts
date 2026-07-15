@@ -73,6 +73,22 @@ describe('WebTtsController', () => {
     expect(controller.status.playing).toBe(false);
   });
 
+  it('emits exactly one finished notification when the last sentence ends', () => {
+    const controller = new WebTtsController();
+    const finishes: number[] = [];
+    controller.setListener((status) => {
+      // Mirror the reader's chapter-advance guard exactly.
+      if (status.finished && !status.sentence && status.totalSentences > 0) {
+        finishes.push(status.sentenceIndex);
+      }
+    });
+    controller.load('Only sentence.');
+    controller.play();
+    synthesis.spoken[0]!.onend?.();
+    // Two would advance the reader two chapters at once.
+    expect(finishes).toHaveLength(1);
+  });
+
   it('halts on utterance error', () => {
     const controller = new WebTtsController();
     controller.load(TEXT);
