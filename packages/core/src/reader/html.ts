@@ -350,6 +350,29 @@ ${paragraphsHtml}
     post({ type: 'tap' });
   });
 
+  // Touch swipe → page turn (paged mode), so it feels native on mobile
+  // alongside the edge tap zones. A tap (no movement) still falls through to
+  // the click handler above for chrome-toggle / edge turns.
+  var swipeX = 0, swipeY = 0, swipeT = 0;
+  document.addEventListener('touchstart', function (event) {
+    if (event.touches.length !== 1) return;
+    swipeX = event.touches[0].clientX;
+    swipeY = event.touches[0].clientY;
+    swipeT = event.timeStamp;
+  }, { passive: true });
+  document.addEventListener('touchend', function (event) {
+    if (!PAGED || extending) return;
+    var sel = window.getSelection();
+    if (sel && !sel.isCollapsed) return; // don't hijack a text selection
+    var t = event.changedTouches[0];
+    if (!t) return;
+    var dx = t.clientX - swipeX;
+    var dy = t.clientY - swipeY;
+    if (event.timeStamp - swipeT < 700 && Math.abs(dx) > 45 && Math.abs(dx) > Math.abs(dy) * 1.4) {
+      turnPage(dx < 0 ? 1 : -1);
+    }
+  }, { passive: true });
+
   // Desktop: the pending highlight follows the cursor live while extending.
   document.addEventListener('pointermove', function (event) {
     if (!extending || event.pointerType === 'touch') return;

@@ -8,6 +8,7 @@ import {
   StyleSheet,
   Text,
   View,
+  type ViewStyle,
 } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
@@ -40,6 +41,7 @@ import {
 } from '../lib/preferences';
 import { TtsController, pickBestVoice } from '../tts/TtsController';
 import { colors } from '../ui/theme';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Reader'>;
 
@@ -67,6 +69,84 @@ const THEME_PREVIEWS = (Object.keys(THEME_LABELS) as ReaderTheme[]).map((key) =>
 
 const RATES = [0.9, 1.0, 1.15, 1.3, 1.5];
 const DEFAULT_FONT_SIZE = 19;
+
+/** #rgb / #rrggbb → rgba() string, so theme colors can be tinted for borders etc. */
+function withAlpha(hex: string, alpha: number): string {
+  let h = hex.replace('#', '');
+  if (h.length === 3)
+    h = h
+      .split('')
+      .map((c) => c + c)
+      .join('');
+  const n = parseInt(h, 16);
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
+}
+
+/** Panel palette derived from the active reader theme, mirroring the web CSS vars. */
+function panelFor(theme: ReaderTheme) {
+  const t = READER_THEMES[theme] ?? READER_THEMES.paper;
+  return {
+    bg: t.bg,
+    fg: t.fg,
+    muted: withAlpha(t.fg, 0.55),
+    border: withAlpha(t.fg, 0.16),
+    accent: t.accent,
+  };
+}
+
+/**
+ * Transport glyphs drawn as views (triangles via borders, bars as rects) so
+ * they take the theme color — emoji ignore `color` and break in dark mode.
+ * Shapes mirror the desktop PlayerIcon.
+ */
+function PlayerIcon({
+  kind,
+  color,
+  size = 9,
+}: {
+  kind: 'prev' | 'play' | 'pause' | 'next';
+  color: string;
+  size?: number;
+}) {
+  const bar: ViewStyle = {
+    width: Math.max(2, Math.round(size * 0.34)),
+    height: size * 2,
+    borderRadius: 1,
+    backgroundColor: color,
+  };
+  const tri = (dir: 'left' | 'right'): ViewStyle => ({
+    width: 0,
+    height: 0,
+    borderTopWidth: size,
+    borderBottomWidth: size,
+    borderTopColor: 'transparent',
+    borderBottomColor: 'transparent',
+    ...(dir === 'right'
+      ? { borderLeftWidth: size * 1.5, borderLeftColor: color }
+      : { borderRightWidth: size * 1.5, borderRightColor: color }),
+  });
+  if (kind === 'play') return <View style={tri('right')} />;
+  if (kind === 'pause')
+    return (
+      <View style={{ flexDirection: 'row', gap: size * 0.5 }}>
+        <View style={bar} />
+        <View style={bar} />
+      </View>
+    );
+  if (kind === 'prev')
+    return (
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2 }}>
+        <View style={bar} />
+        <View style={tri('left')} />
+      </View>
+    );
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2 }}>
+      <View style={tri('right')} />
+      <View style={bar} />
+    </View>
+  );
+}
 
 export function ReaderScreen(props: Props) {
   const { bookId } = props.route.params;
@@ -113,7 +193,8 @@ function ReaderInner({
   const [annotations, setAnnotations] = useState<Annotation[]>(loaded.annotations);
   const [selection, setSelection] = useState<Selection | undefined>();
   const [furthest, setFurthest] = useState(initialPosition?.furthest);
-  const [chromeVisible, setChromeVisible] = useState(true);
+  // Immersive by default: pure text, tap the center to summon the chrome.
+  const [chromeVisible, setChromeVisible] = useState(false);
   const [tocVisible, setTocVisible] = useState(false);
   const [settingsVisible, setSettingsVisible] = useState(false);
   const [ttsVisible, setTtsVisible] = useState(false);
@@ -131,6 +212,39 @@ function ReaderInner({
 
   const chapter = chapters[chapterIndex];
   const chapterText = useMemo(() => chapter?.paragraphs.join('\n') ?? '', [chapter]);
+
+  const insets = useSafeAreaInsets();
+  const panel = useMemo(() => panelFor(theme), [theme]);
+  // Theme-reactive chrome + safe-area padding, applied over the layout styles.
+  const dyn = useMemo(
+    () => ({
+      topBar: { backgroundColor: withAlpha(panel.bg, 0.98), borderColor: panel.border },
+      bottomBar: {
+        backgroundColor: withAlpha(panel.bg, 0.98),
+        borderColor: panel.border,
+        paddingBottom: 12 + insets.bottom,
+      },
+      pill: {
+        backgroundColor: panel.bg,
+        borderColor: panel.border,
+        borderWidth: StyleSheet.hairlineWidth,
+        bottom: 56 + insets.bottom,
+      },
+      accentText: { color: panel.accent },
+      mutedText: { color: panel.muted },
+    }),
+    [panel, insets],
+  );
+
+  // Keep the native nav header in step with the reader theme — no light bar
+  // hanging over the top of the page in dark mode.
+  useEffect(() => {
+    navigation.setOptions({
+      headerStyle: { backgroundColor: panel.bg },
+      headerTintColor: panel.accent,
+      headerTitleStyle: { color: panel.fg },
+    });
+  }, [navigation, panel]);
 
   const html = useMemo(
     () =>
@@ -424,7 +538,7 @@ function ReaderInner({
   const nextDisabled = pagination === 'scroll' && chapterIndex >= chapters.length - 1;
 
   return (
-    <View style={styles.screen}>
+    <View style={[styles.screen, { backgroundColor: panel.bg }]}>
       <WebView
         ref={webviewRef}
         source={{ html }}
@@ -435,15 +549,17 @@ function ReaderInner({
       />
 
       {chromeVisible ? (
-        <View style={styles.toolbar}>
+        <View style={[styles.toolbar, dyn.topBar]}>
           <Pressable hitSlop={8} onPress={() => setTocVisible(true)}>
-            <Text style={styles.toolbarButton}>Chapters</Text>
+            <Text style={[styles.toolbarButton, dyn.accentText]}>Chapters</Text>
           </Pressable>
           <Pressable hitSlop={8} onPress={() => setSettingsVisible(true)}>
-            <Text style={styles.toolbarButton}>Aa</Text>
+            <Text style={[styles.toolbarButton, dyn.accentText]}>Aa</Text>
           </Pressable>
           <Pressable hitSlop={8} onPress={ttsVisible ? closeTts : openTts}>
-            <Text style={[styles.toolbarButton, ttsVisible && { color: colors.danger }]}>
+            <Text
+              style={[styles.toolbarButton, dyn.accentText, ttsVisible && { color: colors.danger }]}
+            >
               {ttsVisible ? 'Stop' : 'Listen'}
             </Text>
           </Pressable>
@@ -451,38 +567,42 @@ function ReaderInner({
             hitSlop={8}
             onPress={() => navigation.navigate('Notes', { bookId, title: book.title })}
           >
-            <Text style={styles.toolbarButton}>Notes</Text>
+            <Text style={[styles.toolbarButton, dyn.accentText]}>Notes</Text>
           </Pressable>
         </View>
       ) : null}
 
       {chromeVisible ? (
-        <View style={styles.chapterNav}>
+        <View style={[styles.chapterNav, dyn.bottomBar]}>
           <Pressable hitSlop={8} disabled={prevDisabled} onPress={() => turnOrGo(-1)}>
-            <Text style={[styles.navArrow, prevDisabled && styles.navDisabled]}>‹ Prev</Text>
+            <Text style={[styles.navArrow, dyn.accentText, prevDisabled && styles.navDisabled]}>
+              ‹ Prev
+            </Text>
           </Pressable>
-          <Text style={styles.chapterLabel} numberOfLines={1}>
+          <Text style={[styles.chapterLabel, dyn.mutedText]} numberOfLines={1}>
             {chapterIndex + 1} / {chapters.length} · {chapter.title}
           </Text>
           <Pressable hitSlop={8} disabled={nextDisabled} onPress={() => turnOrGo(1)}>
-            <Text style={[styles.navArrow, nextDisabled && styles.navDisabled]}>Next ›</Text>
+            <Text style={[styles.navArrow, dyn.accentText, nextDisabled && styles.navDisabled]}>
+              Next ›
+            </Text>
           </Pressable>
         </View>
       ) : null}
 
       {furthest && chapterIndex < furthest.chapterIndex ? (
         <Pressable
-          style={styles.resumeChip}
+          style={[styles.resumeChip, dyn.pill]}
           onPress={() => goToChapter(furthest.chapterIndex, furthest.offset)}
         >
-          <Text style={styles.resumeChipText} numberOfLines={1}>
+          <Text style={[styles.resumeChipText, dyn.accentText]} numberOfLines={1}>
             Resume at {chapters[furthest.chapterIndex]?.title ?? 'furthest point'} →
           </Text>
         </Pressable>
       ) : null}
 
       {selection ? (
-        <View style={styles.selectionBar}>
+        <View style={[styles.selectionBar, dyn.pill]}>
           {(Object.keys(HIGHLIGHT_COLORS) as HighlightColor[]).map((color) => (
             <Pressable
               key={color}
@@ -491,27 +611,29 @@ function ReaderInner({
             />
           ))}
           <Pressable hitSlop={8} onPress={promptNote}>
-            <Text style={styles.selectionAction}>Note</Text>
+            <Text style={[styles.selectionAction, dyn.accentText]}>Note</Text>
           </Pressable>
           <Pressable hitSlop={8} onPress={() => sharePassage(selection.text)}>
-            <Text style={styles.selectionAction}>Share</Text>
+            <Text style={[styles.selectionAction, dyn.accentText]}>Share</Text>
           </Pressable>
         </View>
       ) : null}
 
       {ttsVisible ? (
-        <View style={styles.ttsBar}>
-          <Pressable hitSlop={8} onPress={() => getTts().previous()}>
-            <Text style={styles.ttsButton}>⏮</Text>
+        <View style={[styles.ttsBar, dyn.pill]}>
+          <Pressable hitSlop={10} onPress={() => getTts().previous()}>
+            <PlayerIcon kind="prev" color={panel.fg} />
           </Pressable>
-          <Pressable hitSlop={8} onPress={toggleTtsPlay}>
-            <Text style={styles.ttsButtonMain}>{ttsPlaying ? '⏸' : '▶'}</Text>
+          <Pressable hitSlop={10} onPress={toggleTtsPlay}>
+            <PlayerIcon kind={ttsPlaying ? 'pause' : 'play'} color={panel.accent} size={11} />
           </Pressable>
-          <Pressable hitSlop={8} onPress={() => getTts().next()}>
-            <Text style={styles.ttsButton}>⏭</Text>
+          <Pressable hitSlop={10} onPress={() => getTts().next()}>
+            <PlayerIcon kind="next" color={panel.fg} />
           </Pressable>
           <Pressable hitSlop={8} onPress={cycleRate}>
-            <Text style={styles.ttsRate}>{ttsRate.toFixed(2).replace(/0$/, '')}×</Text>
+            <Text style={[styles.ttsRate, dyn.mutedText]}>
+              {ttsRate.toFixed(2).replace(/0$/, '')}×
+            </Text>
           </Pressable>
         </View>
       ) : null}
