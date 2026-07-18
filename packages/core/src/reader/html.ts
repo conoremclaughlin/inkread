@@ -146,7 +146,7 @@ export function buildReaderHtml(
 <html>
 <head>
 <meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"/>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"/>
 <style>
   html { -webkit-text-size-adjust: 100%; }
   body {
@@ -156,7 +156,7 @@ export function buildReaderHtml(
     font-size: ${settings.fontSize}px;
     line-height: 1.65;
     margin: 0;
-    padding: ${paged ? '0' : '10px 20px 64px'};
+    padding: ${paged ? '0' : '16px 20px calc(44px + env(safe-area-inset-bottom, 0px))'};
     -webkit-tap-highlight-color: transparent;
     ${paged ? 'overflow: hidden; height: 100vh;' : ''}
   }
@@ -164,8 +164,8 @@ export function buildReaderHtml(
     paged
       ? `#content {
     box-sizing: border-box;
-    height: calc(100vh - 34px);
-    margin: 20px 44px 14px;
+    height: calc(100vh - 44px - env(safe-area-inset-bottom, 0px));
+    margin: 20px 44px calc(24px + env(safe-area-inset-bottom, 0px));
     column-width: calc(100vw - 88px);
     column-gap: 88px;
     column-fill: auto;
@@ -312,17 +312,24 @@ ${paragraphsHtml}
     turnAnimation = requestAnimationFrame(step);
   }
 
-  function turnPage(delta) {
-    var target = content.scrollLeft + delta * pageWidth();
-    if (target < -1) { post({ type: 'pageEdge', dir: 'prev' }); return; }
-    if (target > content.scrollWidth - content.clientWidth + 1) {
-      post({ type: 'pageEdge', dir: 'next' });
-      return;
-    }
-    animateScrollTo(Math.round(target / pageWidth()) * pageWidth(), 180);
+  function maxScroll() { return content.scrollWidth - content.clientWidth; }
+  function pageAt(scroll) { return Math.round(scroll / pageWidth()) * pageWidth(); }
+
+  // Settle onto a page delta away from baseScroll (the position the drag
+  // started from), or flow into the neighbor chapter at a boundary. Used by
+  // the release of a finger-drag and by the edge taps / keys.
+  function settlePage(delta, baseScroll) {
+    var base = pageAt(baseScroll == null ? content.scrollLeft : baseScroll);
+    var target = base + delta * pageWidth();
+    if (target < -1) { animateScrollTo(base, 160); post({ type: 'pageEdge', dir: 'prev' }); return; }
+    if (target > maxScroll() + 1) { animateScrollTo(base, 160); post({ type: 'pageEdge', dir: 'next' }); return; }
+    animateScrollTo(target, 190);
   }
 
+  function turnPage(delta) { settlePage(delta, content.scrollLeft); }
+
   document.addEventListener('click', function (event) {
+    if (justDragged) return;
     var hl = event.target.closest ? event.target.closest('[data-hl]') : null;
     if (hl) { post({ type: 'tapHighlight', id: hl.getAttribute('data-hl') }); return; }
     var sel = window.getSelection();
@@ -350,27 +357,51 @@ ${paragraphsHtml}
     post({ type: 'tap' });
   });
 
-  // Touch swipe → page turn (paged mode), so it feels native on mobile
-  // alongside the edge tap zones. A tap (no movement) still falls through to
-  // the click handler above for chrome-toggle / edge turns.
+  // Finger-tracking page drag (paged mode): scrollLeft follows your thumb so
+  // the neighbor page slides in from the screen edge live, then completes or
+  // springs back on release — far more native than the old jump-on-swipe. A
+  // tap (no movement) falls through to the click handler for chrome / edges.
   var swipeX = 0, swipeY = 0, swipeT = 0;
+  var dragging = false, dragDecided = false, dragHoriz = false;
+  var dragBase = 0, dragDX = 0, justDragged = false;
+
   document.addEventListener('touchstart', function (event) {
     if (event.touches.length !== 1) return;
     swipeX = event.touches[0].clientX;
     swipeY = event.touches[0].clientY;
     swipeT = event.timeStamp;
+    dragging = false; dragDecided = false; dragHoriz = false; dragDX = 0;
+    if (PAGED) { if (turnAnimation) { cancelAnimationFrame(turnAnimation); turnAnimation = null; } dragBase = content.scrollLeft; }
   }, { passive: true });
-  document.addEventListener('touchend', function (event) {
-    if (!PAGED || extending) return;
+
+  document.addEventListener('touchmove', function (event) {
+    if (!PAGED || extending || event.touches.length !== 1) return;
     var sel = window.getSelection();
-    if (sel && !sel.isCollapsed) return; // don't hijack a text selection
-    var t = event.changedTouches[0];
-    if (!t) return;
-    var dx = t.clientX - swipeX;
-    var dy = t.clientY - swipeY;
-    if (event.timeStamp - swipeT < 700 && Math.abs(dx) > 45 && Math.abs(dx) > Math.abs(dy) * 1.4) {
-      turnPage(dx < 0 ? 1 : -1);
+    if (sel && !sel.isCollapsed) return; // let text selection win
+    var dx = event.touches[0].clientX - swipeX;
+    var dy = event.touches[0].clientY - swipeY;
+    if (!dragDecided) {
+      if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+      dragDecided = true;
+      dragHoriz = Math.abs(dx) > Math.abs(dy) * 1.2;
     }
+    if (!dragHoriz) return;
+    dragging = true;
+    dragDX = dx;
+    // Drag left (dx<0) pulls the next page in; scrollLeft clamps at the ends.
+    content.scrollLeft = Math.max(0, Math.min(maxScroll(), dragBase - dx));
+    event.preventDefault();
+  }, { passive: false });
+
+  document.addEventListener('touchend', function (event) {
+    if (!PAGED || !dragging) return;
+    dragging = false;
+    justDragged = true;
+    setTimeout(function () { justDragged = false; }, 350);
+    var elapsed = event.timeStamp - swipeT;
+    var flick = Math.abs(dragDX) > 40 && elapsed < 250;
+    if (Math.abs(dragDX) > pageWidth() * 0.22 || flick) settlePage(dragDX < 0 ? 1 : -1, dragBase);
+    else settlePage(0, dragBase);
   }, { passive: true });
 
   // Desktop: the pending highlight follows the cursor live while extending.
