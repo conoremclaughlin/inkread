@@ -89,6 +89,26 @@ describe('WebTtsController', () => {
     expect(finishes).toHaveLength(1);
   });
 
+  it('load() after a finish does not re-fire the finished notification', () => {
+    // Regression: load() used to stop() first, whose notify still carried the
+    // finished (past-the-end) status of the OLD chapter — the reader read that
+    // as a second chapter-end and skipped a chapter. Loading the next chapter
+    // must emit no finished event of its own.
+    const controller = new WebTtsController();
+    const finishes: number[] = [];
+    controller.setListener((status) => {
+      if (status.finished && !status.sentence && status.totalSentences > 0) {
+        finishes.push(status.sentenceIndex);
+      }
+    });
+    controller.load('Only sentence.');
+    controller.play();
+    synthesis.spoken[0]!.onend?.(); // chapter ends → exactly one finish
+    expect(finishes).toHaveLength(1);
+    controller.load('Next chapter opens. And continues.'); // reader loads next chapter
+    expect(finishes).toHaveLength(1);
+  });
+
   it('halts on utterance error', () => {
     const controller = new WebTtsController();
     controller.load(TEXT);

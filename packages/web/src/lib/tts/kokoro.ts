@@ -101,7 +101,13 @@ export class KokoroTtsController {
   }
 
   load(text: string, startOffset = 0): void {
-    this.stop();
+    // Cancel in-flight audio without stop()'s notify: at a chapter end the old
+    // index is past-the-end, so that notify would masquerade as a fresh
+    // "finished" event and advance the chapter a second time. Swap the queue in
+    // first, then emit exactly one clean status for the new chapter.
+    this.generation += 1;
+    this.playing = false;
+    this.stopSource();
     this.sentences = splitSentences(text);
     this.buffers.clear();
     const index = this.sentences.findIndex((s) => s.end > startOffset);

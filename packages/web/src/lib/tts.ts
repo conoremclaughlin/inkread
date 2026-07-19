@@ -26,7 +26,12 @@ export class WebTtsController {
   }
 
   load(text: string, startOffset = 0): void {
-    this.stop();
+    // Cancel any in-flight speech *without* stop()'s notify: at a chapter end
+    // the old sentences/index are past-the-end, so that notify would look like
+    // a fresh "finished" event and advance the chapter a second time. Swap the
+    // queue in first, then emit exactly one clean status for the new chapter.
+    this.cancelSpeech();
+    this.playing = false;
     this.sentences = splitSentences(text);
     const index = this.sentences.findIndex((s) => s.end > startOffset);
     this.index = index === -1 ? 0 : index;

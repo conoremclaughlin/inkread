@@ -206,6 +206,33 @@ describe('KokoroTtsController', () => {
     expect(finishes).toHaveLength(1);
   });
 
+  it('load() after a finish does not re-fire the finished notification', async () => {
+    // Regression: load() used to stop() first, whose notify still carried the
+    // finished (past-the-end) status of the OLD chapter — the reader read that
+    // as a second chapter-end and skipped a chapter. Loading the next chapter
+    // must emit no finished event of its own.
+    const controller = await readyController();
+    const finishes: number[] = [];
+    controller.setListener((status) => {
+      if (status.finished && !status.sentence && status.totalSentences > 0) {
+        finishes.push(status.sentenceIndex);
+      }
+    });
+    controller.load('Only sentence.');
+    controller.play();
+    await tick();
+    const only = lastWorker().posted.find(
+      (m) => m.type === 'generate' && m.text === 'Only sentence.',
+    )!;
+    emitAudioFor(only.id as number);
+    await tick();
+    MockSourceNode.instances[0]!.onended?.();
+    await tick();
+    expect(finishes).toHaveLength(1);
+    controller.load('Next chapter opens. And continues.'); // reader loads next chapter
+    expect(finishes).toHaveLength(1);
+  });
+
   it('does not resume playback that was stopped mid-generation', async () => {
     const controller = await readyController();
     controller.load(TEXT);

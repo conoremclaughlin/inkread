@@ -247,6 +247,38 @@ export function Reader({
     [bridge, chapters.length],
   );
 
+  // Sentence transport that also crosses chapter boundaries: at the last line
+  // Next flows into the next chapter's first line, and at the first line Prev
+  // flows into the previous chapter's last line — routing through the same
+  // chapterIndex authority as auto-advance, so the view and audio never split.
+  const ttsNext = useCallback(() => {
+    const tts = ttsRef.current;
+    if (!tts) return;
+    const { sentenceIndex, totalSentences, playing } = tts.status;
+    if (totalSentences > 0 && sentenceIndex >= totalSentences - 1) {
+      if (chapterIndex + 1 >= chapters.length) return;
+      ttsContinueRef.current = playing;
+      offsetRef.current = 0;
+      setChapterIndex(chapterIndex + 1);
+    } else {
+      tts.next();
+    }
+  }, [chapterIndex, chapters.length]);
+
+  const ttsPrev = useCallback(() => {
+    const tts = ttsRef.current;
+    if (!tts) return;
+    const { sentenceIndex, playing } = tts.status;
+    if (sentenceIndex <= 0) {
+      if (chapterIndex <= 0) return;
+      ttsContinueRef.current = playing;
+      offsetRef.current = Number.MAX_SAFE_INTEGER;
+      setChapterIndex(chapterIndex - 1);
+    } else {
+      tts.previous();
+    }
+  }, [chapterIndex]);
+
   // Returning listeners get the model warmed in the background, so the
   // first Listen of the session starts in ~a second instead of several.
   useEffect(() => {
@@ -1033,7 +1065,7 @@ export function Reader({
               <>
                 <button
                   aria-label="Previous sentence"
-                  onClick={() => ttsRef.current?.previous()}
+                  onClick={ttsPrev}
                   className="p-1 text-[var(--panel-muted)] transition hover:text-[var(--panel-fg)]"
                 >
                   <PlayerIcon d="M19 5 L9 12 L19 19 Z M7 5 v14" />
@@ -1065,7 +1097,7 @@ export function Reader({
                 </button>
                 <button
                   aria-label="Next sentence"
-                  onClick={() => ttsRef.current?.next()}
+                  onClick={ttsNext}
                   className="p-1 text-[var(--panel-muted)] transition hover:text-[var(--panel-fg)]"
                 >
                   <PlayerIcon d="M5 5 L15 12 L5 19 Z M17 5 v14" />

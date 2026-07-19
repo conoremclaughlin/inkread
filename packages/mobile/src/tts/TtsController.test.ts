@@ -68,6 +68,24 @@ describe('TtsController', () => {
     expect(edges).toHaveLength(1);
   });
 
+  it('load() after a finish does not re-fire the chapter-end edge', () => {
+    // Regression: load() used to stop() first, whose notify still carried the
+    // finished (past-the-end) status of the OLD chapter — the reader read that
+    // as a second chapter-end and skipped a chapter. Loading the next chapter
+    // must emit no chapter-end edge of its own.
+    const controller = new TtsController();
+    const edges: number[] = [];
+    controller.setListener((status) => {
+      if (isChapterEndEdge(status)) edges.push(status.sentenceIndex);
+    });
+    controller.load('Only sentence.');
+    controller.play();
+    spoken[0]!.onDone?.(); // chapter ends → exactly one edge
+    expect(edges).toHaveLength(1);
+    controller.load('Next chapter opens. And continues.'); // reader loads next chapter
+    expect(edges).toHaveLength(1);
+  });
+
   it('ignores a stale onDone after stop (generation guard)', () => {
     const controller = new TtsController();
     controller.load(TEXT);
