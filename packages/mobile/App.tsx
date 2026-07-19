@@ -47,7 +47,11 @@ export default function App() {
         <Stack.Screen
           name="Reader"
           component={ReaderScreen}
-          options={({ route }) => ({ title: route.params.title, headerBackTitle: 'Library' })}
+          options={{
+            headerShown: false,
+            presentation: 'fullScreenModal',
+            animation: 'slide_from_bottom',
+          }}
         />
         <Stack.Screen
           name="Notes"
