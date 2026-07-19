@@ -11,6 +11,8 @@ export interface ReaderPreferences {
   fontSize?: number;
   ttsRate?: number;
   ttsVoice?: string;
+  /** Set once the user has seen the "download better voices" nudge. */
+  voicePromptSeen?: boolean;
 }
 
 const META_KEY = 'preferences';
