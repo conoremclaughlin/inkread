@@ -148,7 +148,7 @@ export function buildReaderHtml(
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"/>
 <style>
-  html { -webkit-text-size-adjust: 100%; }
+  html { -webkit-text-size-adjust: 100%; overscroll-behavior-x: none; }
   body {
     background: ${theme.bg};
     color: ${theme.fg};
@@ -158,6 +158,7 @@ export function buildReaderHtml(
     margin: 0;
     padding: ${paged ? '0' : '16px 20px calc(44px + env(safe-area-inset-bottom, 0px))'};
     -webkit-tap-highlight-color: transparent;
+    overscroll-behavior-x: none;
     ${paged ? 'overflow: hidden; height: 100vh;' : ''}
   }
   ${
@@ -421,6 +422,25 @@ ${paragraphsHtml}
       if (event.key === 'ArrowRight' || event.key === ' ') { event.preventDefault(); turnPage(1); }
       if (event.key === 'ArrowLeft') { event.preventDefault(); turnPage(-1); }
     });
+    // Trackpad horizontal swipe → page turn. preventDefault is the point: it
+    // stops the browser treating the swipe as a back/forward navigation (which
+    // used to yank the reader off-screen instead of turning the page). One turn
+    // per gesture via a short lock; vertical intent falls through to scrolling.
+    var wheelAccum = 0, wheelLock = false, wheelReset = null;
+    document.addEventListener('wheel', function (event) {
+      if (Math.abs(event.deltaX) <= Math.abs(event.deltaY)) return;
+      event.preventDefault();
+      if (wheelLock) return;
+      wheelAccum += event.deltaX;
+      if (wheelReset) clearTimeout(wheelReset);
+      wheelReset = setTimeout(function () { wheelAccum = 0; }, 200);
+      if (Math.abs(wheelAccum) > 60) {
+        wheelLock = true;
+        turnPage(wheelAccum > 0 ? 1 : -1);
+        wheelAccum = 0;
+        setTimeout(function () { wheelLock = false; }, 450);
+      }
+    }, { passive: false });
     // Snap back to a page boundary when the window resizes.
     window.addEventListener('resize', function () {
       content.scrollTo({ left: Math.round(content.scrollLeft / pageWidth()) * pageWidth() });
