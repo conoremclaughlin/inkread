@@ -33,6 +33,8 @@
     "start:online": "expo start",
     "android": "expo start --offline --android",
     "ios": "expo start --offline --ios",
+    "ios:device": "EXPO_OFFLINE=1 expo run:ios --device",
+    "ios:release": "EXPO_OFFLINE=1 expo run:ios --device --configuration Release",
     "web": "expo start --offline --web",
     "test": "vitest run",
     "type-check": "tsc --noEmit",
