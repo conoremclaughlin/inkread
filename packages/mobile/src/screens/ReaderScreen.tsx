@@ -46,6 +46,7 @@ import {
 import { TtsController } from '../tts/TtsController';
 import { resolveVoice, listVoices, QUALITY_LABEL, type VoiceOption } from '../tts/voices';
 import { ensureListeningAudioSession } from '../lib/audio';
+import { resetClientStore } from '../store/clientStore';
 import { BottomSheet } from '../components/BottomSheet';
 import { colors } from '../ui/theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -192,14 +193,52 @@ const SHEET_LIST_MAX = Math.round(Dimensions.get('window').height * 0.5);
 export function ReaderScreen(props: Props) {
   const { bookId } = props.route.params;
   const [data, setData] = useState<
-    { loaded: LoadedBook; preferences: ReaderPreferences } | null | undefined
+    { loaded: LoadedBook; preferences: ReaderPreferences } | null | 'error' | undefined
   >(undefined);
+  const [attempt, setAttempt] = useState(0);
   useEffect(() => {
-    void Promise.all([loadBook(bookId), loadPreferences()]).then(([loaded, preferences]) =>
-      setData(loaded ? { loaded, preferences } : null),
-    );
-  }, [bookId]);
+    let cancelled = false;
+    setData(undefined);
+    void Promise.all([loadBook(bookId), loadPreferences()])
+      .then(([loaded, preferences]) => {
+        if (!cancelled) setData(loaded ? { loaded, preferences } : null);
+      })
+      // A rejection here (usually a SQLite handle invalidated while the app was
+      // backgrounded) must not leave a permanent blank screen: surface it and
+      // offer a retry, which reopens the connection via the self-healing driver.
+      .catch(() => {
+        if (!cancelled) setData('error');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [bookId, attempt]);
   if (data === undefined) return <View style={styles.center} />;
+  if (data === 'error') {
+    return (
+      <View style={styles.center}>
+        <Text style={{ color: colors.inkSoft, textAlign: 'center', paddingHorizontal: 40 }}>
+          Couldn’t open this book — this can happen right after the app returns from the
+          background.
+        </Text>
+        <Pressable
+          onPress={() => {
+            resetClientStore();
+            setAttempt((n) => n + 1);
+          }}
+          style={{
+            marginTop: 18,
+            paddingHorizontal: 22,
+            paddingVertical: 10,
+            borderRadius: 22,
+            backgroundColor: colors.accent,
+          }}
+        >
+          <Text style={{ color: colors.bg, fontWeight: '700' }}>Try again</Text>
+        </Pressable>
+      </View>
+    );
+  }
   if (data === null) {
     return (
       <View style={styles.center}>
