@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { buildEpub, exportAnnotationsMarkdown } from '@inkread/core';
+import { buildEpub, exportAnnotationsCsv, exportAnnotationsMarkdown } from '@inkread/core';
 import { asResponse, getRepository } from '@/lib/data';
 
 type Params = { params: Promise<{ bookId: string }> };
@@ -11,6 +11,7 @@ function fileName(title: string, extension: string): string {
 
 /**
  * GET /api/books/:id/export?format=markdown — notes/highlights as Markdown
+ * GET /api/books/:id/export?format=csv — notes/highlights as CSV (Notion/Sheets)
  * GET /api/books/:id/export?format=epub — the book as an EPUB 3 file
  */
 export async function GET(request: Request, { params }: Params) {
@@ -44,6 +45,17 @@ export async function GET(request: Request, { params }: Params) {
     }
 
     const annotations = await repository.listAnnotations(bookId);
+
+    if (format === 'csv') {
+      const csv = exportAnnotationsCsv(book, annotations);
+      return new NextResponse(csv, {
+        headers: {
+          'Content-Type': 'text/csv; charset=utf-8',
+          'Content-Disposition': `attachment; filename="${fileName(book.title, 'csv')}"`,
+        },
+      });
+    }
+
     const markdown = exportAnnotationsMarkdown(book, annotations);
     return new NextResponse(markdown, {
       headers: {
