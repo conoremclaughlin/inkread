@@ -73,6 +73,30 @@ export const HIGHLIGHT_COLORS: Record<string, string> = {
   purple: '175, 130, 230',
 };
 
+/** Themes whose page is dark enough that the reader's text is the light layer. */
+function isDarkTheme(theme: ReaderTheme): boolean {
+  return theme === 'night' || theme === 'midnight' || theme === 'dark';
+}
+
+/**
+ * The rgb triple to fill a highlight of `color` under `theme`. The palette is
+ * tuned for dark text on a light page; on dark themes those bright, saturated
+ * fills sit at nearly the same lightness as the ivory body text, so a highlight
+ * washes the words out. For dark themes we pull each colour toward gray
+ * (desaturate) and darken it, so the fill drops below the text in lightness —
+ * the words read clearly on top while the hue is still recognisable.
+ */
+function highlightRgb(color: string, theme: ReaderTheme): string {
+  const raw = HIGHLIGHT_COLORS[color] ?? HIGHLIGHT_COLORS['yellow']!;
+  if (!isDarkTheme(theme)) return raw;
+  const [r, g, b] = raw.split(',').map((n) => parseInt(n.trim(), 10)) as [number, number, number];
+  const gray = (r + g + b) / 3;
+  const DESATURATE = 0.6; // keep 60% of the hue, 40% pulled toward gray
+  const DARKEN = 0.62; // then scale brightness down
+  const adjust = (c: number) => Math.round((c * DESATURATE + gray * (1 - DESATURATE)) * DARKEN);
+  return `${adjust(r)}, ${adjust(g)}, ${adjust(b)}`;
+}
+
 function escapeHtml(text: string): string {
   return text
     .replace(/&/g, '&amp;')
@@ -125,7 +149,7 @@ export function buildReaderHtml(
       const segments = segmentParagraph(text, offset, annotations)
         .map((seg) => {
           if (!seg.annotation) return escapeHtml(seg.text);
-          const rgb = HIGHLIGHT_COLORS[seg.annotation.color] ?? HIGHLIGHT_COLORS['yellow']!;
+          const rgb = highlightRgb(seg.annotation.color, settings.theme);
           const noteBadge = seg.annotation.note ? ' hl-note' : '';
           return `<span class="hl${noteBadge}" data-hl="${seg.annotation.id}" style="background: rgba(${rgb}, ${theme.hlAlpha})">${escapeHtml(seg.text)}</span>`;
         })
@@ -136,8 +160,11 @@ export function buildReaderHtml(
     })
     .join('\n');
 
-  const colorCss = Object.entries(HIGHLIGHT_COLORS)
-    .map(([name, rgb]) => `.sel-${name} { background: rgba(${rgb}, ${theme.hlAlpha}); }`)
+  const colorCss = Object.keys(HIGHLIGHT_COLORS)
+    .map(
+      (name) =>
+        `.sel-${name} { background: rgba(${highlightRgb(name, settings.theme)}, ${theme.hlAlpha}); }`,
+    )
     .join('\n');
 
   const paged = settings.pagination === 'paged';
@@ -176,7 +203,7 @@ export function buildReaderHtml(
   }
   h1 { font-size: 1.45em; line-height: 1.25; margin: 0.5em 0 1em; }
   p { margin: 0 0 0.85em; text-align: justify; -webkit-hyphens: auto; hyphens: auto; }
-  ::selection { background: rgba(${HIGHLIGHT_COLORS['yellow']}, 0.5); }
+  ::selection { background: rgba(${highlightRgb('yellow', settings.theme)}, 0.5); }
   .hl { border-radius: 2px; }
   .hl-note { border-bottom: 2px solid ${theme.accent}; }
   .tts-mark { background: rgba(120, 170, 255, 0.35); border-radius: 2px; }
