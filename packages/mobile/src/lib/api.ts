@@ -70,12 +70,17 @@ async function tryRefresh(): Promise<boolean> {
     // Unreachable server ≠ dead session. Keep the tokens; stay signed in.
     return false;
   }
-  if (!response.ok) {
+  if (response.status === 401 || response.status === 403) {
     // The server saw the token and said no: expired or revoked. Silent
     // failure here is how a device ends up "signed in" with sync dead
     // forever — surface it so the app can prompt a re-login.
     await logout();
     sessionExpiredListener?.();
+    return false;
+  }
+  if (!response.ok) {
+    // 5xx/429: a server fault, not a verdict on the token. Keep the
+    // session so recovery works once the server is healthy again.
     return false;
   }
   const body = (await response.json()) as { accessToken: string; refreshToken: string };
