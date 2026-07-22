@@ -129,15 +129,36 @@ export class ClientStore {
 
   // --- chapters -----------------------------------------------------------
 
-  async replaceChapters(bookId: string, chapters: Chapter[]): Promise<void> {
-    await this.driver.run('delete from chapters where book_id = ?', [bookId]);
-    for (let index = 0; index < chapters.length; index++) {
-      const chapter = chapters[index]!;
-      await this.driver.run(
-        'insert into chapters (book_id, chapter_index, title, paragraphs_json) values (?, ?, ?, ?)',
-        [bookId, index, chapter.title, JSON.stringify(chapter.paragraphs)],
-      );
+  /** Run fn atomically: native driver transaction, else BEGIN/COMMIT. */
+  private async atomically(fn: () => Promise<void>): Promise<void> {
+    if (this.driver.transaction) {
+      await this.driver.transaction(fn);
+      return;
     }
+    await this.driver.exec('begin');
+    try {
+      await fn();
+      await this.driver.exec('commit');
+    } catch (error) {
+      await this.driver.exec('rollback').catch(() => undefined);
+      throw error;
+    }
+  }
+
+  async replaceChapters(bookId: string, chapters: Chapter[]): Promise<void> {
+    // Atomic delete+insert: a crash mid-replace must never leave a book with
+    // zero or partial chapters — that dead-ends the reader on devices that
+    // can't re-sync (offline, expired session).
+    await this.atomically(async () => {
+      await this.driver.run('delete from chapters where book_id = ?', [bookId]);
+      for (let index = 0; index < chapters.length; index++) {
+        const chapter = chapters[index]!;
+        await this.driver.run(
+          'insert into chapters (book_id, chapter_index, title, paragraphs_json) values (?, ?, ?, ?)',
+          [bookId, index, chapter.title, JSON.stringify(chapter.paragraphs)],
+        );
+      }
+    });
   }
 
   async getChapters(bookId: string): Promise<Chapter[]> {

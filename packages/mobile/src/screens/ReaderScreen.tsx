@@ -240,9 +240,26 @@ export function ReaderScreen(props: Props) {
     );
   }
   if (data === null) {
+    // The book row exists but its content isn't on this device and the
+    // on-demand fetch failed (offline or signed-out). Offer a retry — the
+    // dead-end with no way back is exactly the state we must never ship.
     return (
       <View style={styles.center}>
-        <Text style={{ color: colors.inkSoft }}>Book not found on this device yet.</Text>
+        <Text style={{ color: colors.inkSoft, textAlign: 'center', paddingHorizontal: 40 }}>
+          This book hasn’t downloaded to this device yet. Check your connection and try again.
+        </Text>
+        <Pressable
+          onPress={() => setAttempt((n) => n + 1)}
+          style={{
+            marginTop: 18,
+            paddingHorizontal: 22,
+            paddingVertical: 10,
+            borderRadius: 22,
+            backgroundColor: colors.accent,
+          }}
+        >
+          <Text style={{ color: colors.bg, fontWeight: '700' }}>Try again</Text>
+        </Pressable>
       </View>
     );
   }

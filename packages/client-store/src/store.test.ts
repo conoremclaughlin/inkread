@@ -89,4 +89,58 @@ describe('ClientStore', () => {
     await store.setMeta('last_sync_at', '2026-07-13T00:00:00Z');
     expect(await store.getMeta('last_sync_at')).toBe('2026-07-13T00:00:00Z');
   });
+
+  it('replaceChapters is atomic — a failure mid-replace keeps the old chapters', async () => {
+    const driver = testDriver();
+    const failing: typeof driver = {
+      ...driver,
+      run: async (sql, params) => {
+        // Fail the second insert of the replacement batch (after the delete
+        // and first insert succeeded) — simulates a crash mid-refresh.
+        if (/insert into chapters/.test(sql) && params?.[1] === 1 && armed) {
+          throw new Error('boom');
+        }
+        return driver.run(sql, params);
+      },
+    };
+    let armed = false;
+    const fragile = new ClientStore(failing);
+    await fragile.init();
+    await fragile.upsertBooks([BOOK]);
+    await fragile.replaceChapters('b1', [
+      { title: 'Old One', paragraphs: ['Old.'] },
+      { title: 'Old Two', paragraphs: ['Older.'] },
+    ]);
+
+    armed = true;
+    await expect(
+      fragile.replaceChapters('b1', [
+        { title: 'New One', paragraphs: ['New.'] },
+        { title: 'New Two', paragraphs: ['Newer.'] },
+      ]),
+    ).rejects.toThrow('boom');
+
+    // Rollback must have preserved the previous content — never zero or
+    // partial chapters (that dead-ends the reader offline).
+    const chapters = await fragile.getChapters('b1');
+    expect(chapters.map((c) => c.title)).toEqual(['Old One', 'Old Two']);
+  });
+
+  it('replaceChapters prefers a native driver transaction when available', async () => {
+    const driver = testDriver();
+    let used = 0;
+    const withTxn: typeof driver = {
+      ...driver,
+      transaction: async (fn) => {
+        used += 1;
+        return fn();
+      },
+    };
+    const txnStore = new ClientStore(withTxn);
+    await txnStore.init();
+    await txnStore.upsertBooks([BOOK]);
+    await txnStore.replaceChapters('b1', [{ title: 'One', paragraphs: ['Hi.'] }]);
+    expect(used).toBe(1);
+    expect(await txnStore.countChapters('b1')).toBe(1);
+  });
 });

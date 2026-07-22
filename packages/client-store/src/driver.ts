@@ -15,4 +15,10 @@ export interface SqlDriver {
   all<T = Record<string, unknown>>(sql: string, params?: SqlParam[]): Promise<T[]>;
   /** Query a single row. */
   get<T = Record<string, unknown>>(sql: string, params?: SqlParam[]): Promise<T | undefined>;
+  /**
+   * Run fn atomically. Optional: platforms with native transaction APIs
+   * (better-sqlite3, expo-sqlite) should implement this; callers fall back
+   * to BEGIN/COMMIT/ROLLBACK over exec() when absent.
+   */
+  transaction?<T>(fn: () => Promise<T>): Promise<T>;
 }

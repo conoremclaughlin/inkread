@@ -46,21 +46,41 @@ export async function logout(): Promise<void> {
   await store.setMeta('refresh_token', '');
 }
 
+/**
+ * Fired when the server has definitively rejected our refresh token — the
+ * session is dead and only a fresh sign-in can revive sync. NOT fired for
+ * network failures (offline must keep serving the cache, signed in).
+ */
+let sessionExpiredListener: (() => void) | undefined;
+
+export function onSessionExpired(listener: () => void): void {
+  sessionExpiredListener = listener;
+}
+
 async function tryRefresh(): Promise<boolean> {
   if (!refreshToken) return false;
+  let response: Response;
   try {
-    const response = await fetch(`${API_URL}/api/auth/refresh`, {
+    response = await fetch(`${API_URL}/api/auth/refresh`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ refreshToken }),
     });
-    if (!response.ok) return false;
-    const body = (await response.json()) as { accessToken: string; refreshToken: string };
-    await persistTokens(body.accessToken, body.refreshToken);
-    return true;
   } catch {
+    // Unreachable server ≠ dead session. Keep the tokens; stay signed in.
     return false;
   }
+  if (!response.ok) {
+    // The server saw the token and said no: expired or revoked. Silent
+    // failure here is how a device ends up "signed in" with sync dead
+    // forever — surface it so the app can prompt a re-login.
+    await logout();
+    sessionExpiredListener?.();
+    return false;
+  }
+  const body = (await response.json()) as { accessToken: string; refreshToken: string };
+  await persistTokens(body.accessToken, body.refreshToken);
+  return true;
 }
 
 export async function apiFetch(path: string, init?: RequestInit): Promise<Response> {

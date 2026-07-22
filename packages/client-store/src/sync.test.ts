@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { ClientStore } from './store';
-import { SyncEngine } from './sync';
+import { SyncEngine, SyncHttpError } from './sync';
 import { jsonResponse, testDriver } from './test-utils';
 
 function makeApi(state: {
@@ -115,6 +115,34 @@ describe('SyncEngine', () => {
     const offline = async () => jsonResponse({ error: 'offline' }, 503);
     await expect(new SyncEngine(store, offline).pull()).rejects.toThrow('503');
     expect(await store.listBooks()).toHaveLength(1);
+    expect((await store.getChapters('b1'))[0]!.paragraphs).toEqual(['Hello.']);
+  });
+
+  it('carries the HTTP status on sync failures', async () => {
+    const dead = async () => jsonResponse({ error: 'no session' }, 401);
+    const error = await new SyncEngine(store, dead).pull().catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(SyncHttpError);
+    expect((error as SyncHttpError).status).toBe(401);
+  });
+
+  it('pullBookContent recovers a book whose content is missing locally', async () => {
+    // Book row cached without chapters — the interrupted-first-sync state.
+    await store.upsertBooks([BOOK as never]);
+    expect(await store.countChapters('b1')).toBe(0);
+
+    const api = makeApi({ books: [BOOK], chapters: { b1: [{ title: 'One', paragraphs: ['Back.'] }] } });
+    const chapters = await new SyncEngine(store, api.fetcher).pullBookContent('b1');
+    expect(chapters).toHaveLength(1);
+    expect((await store.getChapters('b1'))[0]!.paragraphs).toEqual(['Back.']);
+  });
+
+  it('pullBookContent leaves the cache untouched when the fetch fails', async () => {
+    const api = makeApi({ books: [BOOK], chapters: { b1: [{ title: 'One', paragraphs: ['Hello.'] }] } });
+    await new SyncEngine(store, api.fetcher).pull();
+
+    const offline = async () => jsonResponse({ error: 'offline' }, 503);
+    const result = await new SyncEngine(store, offline).pullBookContent('b1');
+    expect(result).toBeUndefined();
     expect((await store.getChapters('b1'))[0]!.paragraphs).toEqual(['Hello.']);
   });
 });
