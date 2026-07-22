@@ -148,7 +148,7 @@ export function buildReaderHtml(
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"/>
 <style>
-  html { -webkit-text-size-adjust: 100%; overscroll-behavior-x: none; }
+  html { -webkit-text-size-adjust: 100%; overscroll-behavior-x: none;${paged ? ' overflow: hidden; height: 100%;' : ''} }
   body {
     background: ${theme.bg};
     color: ${theme.fg};
@@ -165,12 +165,20 @@ export function buildReaderHtml(
     paged
       ? `#content {
     box-sizing: border-box;
+    width: calc(100vw - 88px);
     height: calc(100vh - 44px - env(safe-area-inset-bottom, 0px));
-    margin: 20px 44px calc(24px + env(safe-area-inset-bottom, 0px));
+    margin: 20px auto calc(24px + env(safe-area-inset-bottom, 0px));
     column-width: calc(100vw - 88px);
     column-gap: 88px;
     column-fill: auto;
-    overflow: hidden;
+    /* Columns past the first spill out of this centred box; <body> (overflow:
+       hidden, full width) clips them at the screen edges, so a page can slide
+       fully edge-to-edge. Turns are a compositor transform (translate3d) rather
+       than scrollLeft, so they run on the GPU thread and stay smooth. */
+    overflow: visible;
+    will-change: transform;
+    transform: translateZ(0);
+    backface-visibility: hidden;
   }`
       : ''
   }
@@ -293,41 +301,67 @@ ${paragraphsHtml}
     }
   }
 
-  // Kobo-quick page turns: native smooth scrolling is ~400ms and not
-  // tunable, so animate scrollLeft ourselves with a short ease-out.
-  var turnAnimation = null;
-  function animateScrollTo(left, duration) {
-    if (turnAnimation) cancelAnimationFrame(turnAnimation);
-    var from = content.scrollLeft;
-    var change = left - from;
-    if (change === 0) return;
-    var start = null;
-    function step(now) {
-      if (start === null) start = now;
-      var t = Math.min(1, (now - start) / duration);
-      var eased = 1 - Math.pow(1 - t, 3);
-      content.scrollLeft = from + change * eased;
-      if (t < 1) turnAnimation = requestAnimationFrame(step);
-      else { turnAnimation = null; reportPosition(); }
+  // Page position as a horizontal offset (px), applied as translate3d(-viewX)
+  // on #content. Turns animate with a CSS transition on transform, so the whole
+  // slide runs on the compositor thread — buttery even while the main thread is
+  // busy — instead of the old per-frame scrollLeft writes that forced a layout
+  // every frame. The finger-drag writes the transform directly (no relayout).
+  var TURN_MS = 240;
+  var EDGE_MS = 200;
+  var viewX = 0;
+
+  function applyTransform(x, ms) {
+    if (ms) {
+      content.style.transition = 'transform ' + ms + 'ms cubic-bezier(0.22, 0.61, 0.36, 1)';
+      void content.offsetWidth; // flush so the transition starts from where we are now
+    } else {
+      content.style.transition = 'none';
     }
-    turnAnimation = requestAnimationFrame(step);
+    content.style.transform = 'translate3d(' + -x + 'px, 0, 0)';
   }
 
-  function maxScroll() { return content.scrollWidth - content.clientWidth; }
+  function setViewX(x, ms) {
+    viewX = Math.max(0, Math.min(maxScroll(), x));
+    applyTransform(viewX, ms);
+  }
+
+  // The compositor holds the live position mid-transition; read it back from the
+  // computed matrix so grabbing a page in flight feels responsive.
+  function readViewX() {
+    var cs = typeof getComputedStyle === 'function' ? getComputedStyle(content).transform : '';
+    if (!cs || cs === 'none') return viewX;
+    try { return -new DOMMatrixReadOnly(cs).m41; } catch (e) { return viewX; }
+  }
+
+  content.addEventListener('transitionend', function (event) {
+    if (event.propertyName === 'transform') reportPosition();
+  });
+
+  // #content is overflow:visible so its columns can slide past the screen edge,
+  // but scrollWidth is only trustworthy on a scroll container — toggle
+  // overflow:hidden for the measurement, then cache the extent.
+  var maxX = 0;
+  function measure() {
+    if (!PAGED) return;
+    content.style.overflow = 'hidden';
+    maxX = Math.max(0, content.scrollWidth - content.clientWidth);
+    content.style.overflow = '';
+  }
+  function maxScroll() { return maxX; }
   function pageAt(scroll) { return Math.round(scroll / pageWidth()) * pageWidth(); }
 
   // Settle onto a page delta away from baseScroll (the position the drag
   // started from), or flow into the neighbor chapter at a boundary. Used by
   // the release of a finger-drag and by the edge taps / keys.
   function settlePage(delta, baseScroll) {
-    var base = pageAt(baseScroll == null ? content.scrollLeft : baseScroll);
+    var base = pageAt(baseScroll == null ? viewX : baseScroll);
     var target = base + delta * pageWidth();
-    if (target < -1) { animateScrollTo(base, 160); post({ type: 'pageEdge', dir: 'prev' }); return; }
-    if (target > maxScroll() + 1) { animateScrollTo(base, 160); post({ type: 'pageEdge', dir: 'next' }); return; }
-    animateScrollTo(target, 190);
+    if (target < -1) { setViewX(base, EDGE_MS); post({ type: 'pageEdge', dir: 'prev' }); return; }
+    if (target > maxScroll() + 1) { setViewX(base, EDGE_MS); post({ type: 'pageEdge', dir: 'next' }); return; }
+    setViewX(target, TURN_MS);
   }
 
-  function turnPage(delta) { settlePage(delta, content.scrollLeft); }
+  function turnPage(delta) { settlePage(delta, viewX); }
 
   document.addEventListener('click', function (event) {
     if (justDragged) return;
@@ -358,7 +392,7 @@ ${paragraphsHtml}
     post({ type: 'tap' });
   });
 
-  // Finger-tracking page drag (paged mode): scrollLeft follows your thumb so
+  // Finger-tracking page drag (paged mode): the transform follows your thumb so
   // the neighbor page slides in from the screen edge live, then completes or
   // springs back on release — far more native than the old jump-on-swipe. A
   // tap (no movement) falls through to the click handler for chrome / edges.
@@ -372,7 +406,7 @@ ${paragraphsHtml}
     swipeY = event.touches[0].clientY;
     swipeT = event.timeStamp;
     dragging = false; dragDecided = false; dragHoriz = false; dragDX = 0;
-    if (PAGED) { if (turnAnimation) { cancelAnimationFrame(turnAnimation); turnAnimation = null; } dragBase = content.scrollLeft; }
+    if (PAGED) { viewX = readViewX(); setViewX(viewX, 0); dragBase = viewX; }
   }, { passive: true });
 
   document.addEventListener('touchmove', function (event) {
@@ -389,8 +423,14 @@ ${paragraphsHtml}
     if (!dragHoriz) return;
     dragging = true;
     dragDX = dx;
-    // Drag left (dx<0) pulls the next page in; scrollLeft clamps at the ends.
-    content.scrollLeft = Math.max(0, Math.min(maxScroll(), dragBase - dx));
+    // Drag left (dx<0) pulls the next page in. Past either end the page keeps
+    // following the thumb at a fraction of the distance — the rubber-band that
+    // makes a native pager feel physical — then settlePage() springs it back.
+    var raw = dragBase - dx;
+    var hi = maxScroll();
+    var visual = raw < 0 ? raw * 0.4 : raw > hi ? hi + (raw - hi) * 0.4 : raw;
+    viewX = Math.max(0, Math.min(hi, raw));
+    applyTransform(visual, 0);
     event.preventDefault();
   }, { passive: false });
 
@@ -441,9 +481,10 @@ ${paragraphsHtml}
         setTimeout(function () { wheelLock = false; }, 450);
       }
     }, { passive: false });
-    // Snap back to a page boundary when the window resizes.
+    // Re-measure and snap back to a page boundary when the window resizes.
     window.addEventListener('resize', function () {
-      content.scrollTo({ left: Math.round(content.scrollLeft / pageWidth()) * pageWidth() });
+      measure();
+      setViewX(pageAt(viewX), 0);
     });
   } else {
     var scrollTimer = null;
@@ -474,10 +515,10 @@ ${paragraphsHtml}
   function bringIntoView(el, smooth) {
     if (!el) return;
     if (PAGED) {
-      var left = content.scrollLeft + el.getBoundingClientRect().left - 44;
+      var left = readViewX() + el.getBoundingClientRect().left - 44;
       var page = Math.max(0, Math.floor(left / pageWidth()) * pageWidth());
-      if (smooth) animateScrollTo(page, 180);
-      else { content.scrollLeft = page; reportPosition(); }
+      if (smooth) setViewX(page, TURN_MS);
+      else { setViewX(page, 0); reportPosition(); }
     } else {
       el.scrollIntoView({ block: smooth ? 'center' : 'start', behavior: smooth ? 'smooth' : 'auto' });
       if (!smooth) window.scrollBy(0, -8);
@@ -528,6 +569,7 @@ ${paragraphsHtml}
     },
   };
 
+  if (PAGED) measure();
   post({ type: 'ready' });
 })();
 </script>
