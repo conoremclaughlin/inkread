@@ -15,6 +15,18 @@ export interface SyncResult {
   chaptersRefreshed: number;
 }
 
+/** Non-2xx from the sync API — carries the status so callers can
+ *  distinguish a dead session (401) from a server fault. */
+export class SyncHttpError extends Error {
+  constructor(
+    path: string,
+    readonly status: number,
+  ) {
+    super(`sync: ${path} ${status}`);
+    this.name = 'SyncHttpError';
+  }
+}
+
 interface ApiBook {
   id: string;
   title: string;
@@ -32,9 +44,23 @@ export class SyncEngine {
     private readonly fetcher: SyncFetch,
   ) {}
 
+  /**
+   * Fetch one book's chapter content into the cache. Returns the chapters,
+   * or undefined when the fetch failed (offline / server error) — the cache
+   * is left untouched in that case. Also used by readers as an on-demand
+   * recovery path when a book's content is missing locally.
+   */
+  async pullBookContent(bookId: string): Promise<Chapter[] | undefined> {
+    const response = await this.fetcher(`/api/books/${bookId}?include=content`);
+    if (!response.ok) return undefined;
+    const { chapters } = (await response.json()) as { chapters: Chapter[] };
+    await this.store.replaceChapters(bookId, chapters);
+    return chapters;
+  }
+
   async pull(): Promise<SyncResult> {
     const response = await this.fetcher('/api/books');
-    if (!response.ok) throw new Error(`sync: /api/books ${response.status}`);
+    if (!response.ok) throw new SyncHttpError('/api/books', response.status);
     const { books } = (await response.json()) as { books: ApiBook[] };
 
     const localBooks = new Map((await this.store.listBooks()).map((b) => [b.id, b]));
@@ -46,10 +72,7 @@ export class SyncEngine {
       const local = localBooks.get(book.id);
       const haveChapters = (await this.store.countChapters(book.id)) > 0;
       if (!local || local.updatedAt !== book.updatedAt || !haveChapters) {
-        const contentResponse = await this.fetcher(`/api/books/${book.id}?include=content`);
-        if (contentResponse.ok) {
-          const { chapters } = (await contentResponse.json()) as { chapters: Chapter[] };
-          await this.store.replaceChapters(book.id, chapters);
+        if (await this.pullBookContent(book.id)) {
           chaptersRefreshed += 1;
         }
       }

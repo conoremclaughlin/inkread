@@ -1,5 +1,5 @@
 import type { Annotation, Chapter, ReadingPosition } from '@inkread/core';
-import type { CachedBook } from '@inkread/client-store';
+import { SyncEngine, type CachedBook } from '@inkread/client-store';
 import { getClientStore } from '../store/clientStore';
 import { apiFetch } from './api';
 
@@ -19,11 +19,23 @@ export async function loadBook(bookId: string): Promise<LoadedBook | null> {
   const store = await getClientStore();
   const book = await store.getBook(bookId);
   if (!book) return null;
-  const [chapters, annotations, position] = await Promise.all([
+  let [chapters, annotations, position] = await Promise.all([
     store.getChapters(bookId),
     store.listAnnotations(bookId),
     store.getPosition(bookId),
   ]);
+  if (chapters.length === 0) {
+    // The cache has the book row but no content (interrupted first sync,
+    // crash mid-refresh). Recover on demand from the API rather than
+    // dead-ending the reader; offline, this stays null and the screen
+    // offers a retry.
+    try {
+      chapters =
+        (await new SyncEngine(store, (path) => apiFetch(path)).pullBookContent(bookId)) ?? [];
+    } catch {
+      chapters = [];
+    }
+  }
   if (chapters.length === 0) return null;
   return { book, chapters, annotations, position: position ?? null };
 }

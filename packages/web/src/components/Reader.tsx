@@ -247,6 +247,38 @@ export function Reader({
     [bridge, chapters.length],
   );
 
+  // Sentence transport that also crosses chapter boundaries: at the last line
+  // Next flows into the next chapter's first line, and at the first line Prev
+  // flows into the previous chapter's last line — routing through the same
+  // chapterIndex authority as auto-advance, so the view and audio never split.
+  const ttsNext = useCallback(() => {
+    const tts = ttsRef.current;
+    if (!tts) return;
+    const { sentenceIndex, totalSentences, playing } = tts.status;
+    if (totalSentences > 0 && sentenceIndex >= totalSentences - 1) {
+      if (chapterIndex + 1 >= chapters.length) return;
+      ttsContinueRef.current = playing;
+      offsetRef.current = 0;
+      setChapterIndex(chapterIndex + 1);
+    } else {
+      tts.next();
+    }
+  }, [chapterIndex, chapters.length]);
+
+  const ttsPrev = useCallback(() => {
+    const tts = ttsRef.current;
+    if (!tts) return;
+    const { sentenceIndex, playing } = tts.status;
+    if (sentenceIndex <= 0) {
+      if (chapterIndex <= 0) return;
+      ttsContinueRef.current = playing;
+      offsetRef.current = Number.MAX_SAFE_INTEGER;
+      setChapterIndex(chapterIndex - 1);
+    } else {
+      tts.previous();
+    }
+  }, [chapterIndex]);
+
   // Returning listeners get the model warmed in the background, so the
   // first Listen of the session starts in ~a second instead of several.
   useEffect(() => {
@@ -539,6 +571,40 @@ export function Reader({
     tts.play();
   }, [bridge, chapterText, getTts, ttsOpen]);
 
+  // Turn a page from the Listen bar. The turn reports a new offset shortly
+  // (turn animation + scroll message), so listening resyncs to that page: now
+  // if it's playing, on the next play otherwise.
+  const ttsTurnPage = useCallback(
+    (delta: number) => {
+      bridge()?.turnPage(delta);
+      const tts = ttsRef.current;
+      if (!tts) return;
+      ttsStaleRef.current = true;
+      if (tts.status.playing) {
+        window.setTimeout(() => {
+          if (!ttsStaleRef.current) return;
+          ttsStaleRef.current = false;
+          tts.load(chapterText, offsetRef.current);
+          tts.play();
+        }, 260);
+      }
+    },
+    [bridge, chapterText],
+  );
+
+  // "Listen from here" on a selection: start narration at the selection's head.
+  const listenFromHere = useCallback(async () => {
+    if (!selection) return;
+    const start = selection.start;
+    setSelection(undefined);
+    setTtsOpen(true);
+    const tts = await getTts();
+    offsetRef.current = start;
+    ttsStaleRef.current = false;
+    tts.load(chapterText, start);
+    tts.play();
+  }, [selection, getTts, chapterText]);
+
   const cycleRate = useCallback(() => {
     const next = RATES[(RATES.indexOf(rate) + 1) % RATES.length]!;
     setRate(next);
@@ -625,7 +691,7 @@ export function Reader({
         </div>
       </header>
 
-      <div className="relative flex-1">
+      <div className={`relative flex-1 ${ttsOpen ? 'pb-14' : ''}`}>
         <iframe
           ref={iframeRef}
           srcDoc={html}
@@ -853,6 +919,13 @@ export function Reader({
             >
               {copied ? 'Copied ✓' : 'Copy'}
             </button>
+            <button
+              onClick={() => void listenFromHere()}
+              className="rounded-lg px-2 py-1 text-sm font-semibold transition hover:opacity-70"
+              style={{ color: themeColors.accent }}
+            >
+              Listen
+            </button>
             {pagination === 'paged' ? (
               <button
                 onClick={startExtend}
@@ -1024,16 +1097,25 @@ export function Reader({
         ) : null}
 
         {ttsOpen ? (
-          <div className="absolute bottom-16 right-6 z-10 flex items-center gap-4 rounded-full bg-[var(--panel-bg)] px-5 py-2.5 shadow-xl ring-1 ring-[var(--panel-border)]">
+          <div className="absolute bottom-2 left-1/2 z-10 flex -translate-x-1/2 items-center gap-2 rounded-full bg-[var(--panel-bg)]/85 px-3 py-1 text-[var(--panel-fg)] shadow-md ring-1 ring-[var(--panel-border)] backdrop-blur-sm">
             {ttsProgress !== undefined ? (
-              <span className="text-sm text-[var(--panel-muted)]">
+              <span className="px-1 text-xs text-[var(--panel-muted)]">
                 Preparing voice… {ttsProgress}%
               </span>
             ) : (
               <>
+                {pagination === 'paged' ? (
+                  <button
+                    aria-label="Previous page"
+                    onClick={() => ttsTurnPage(-1)}
+                    className="p-1 text-[var(--panel-muted)] transition hover:text-[var(--panel-fg)]"
+                  >
+                    <PlayerIcon d="M18 6 L12 12 L18 18 M12 6 L6 12 L12 18" />
+                  </button>
+                ) : null}
                 <button
                   aria-label="Previous sentence"
-                  onClick={() => ttsRef.current?.previous()}
+                  onClick={ttsPrev}
                   className="p-1 text-[var(--panel-muted)] transition hover:text-[var(--panel-fg)]"
                 >
                   <PlayerIcon d="M19 5 L9 12 L19 19 Z M7 5 v14" />
@@ -1047,9 +1129,10 @@ export function Reader({
                       tts.stop();
                       return;
                     }
-                    // Turning pages while paused moves the reading position;
-                    // play should follow it rather than jump back.
-                    if (ttsStaleRef.current) {
+                    // Starting playback should read from what's on screen: in
+                    // paged mode the page is the unit, so always resync to it;
+                    // in scroll mode, resync only if reading moved while paused.
+                    if (ttsStaleRef.current || pagination === 'paged') {
                       ttsStaleRef.current = false;
                       tts.load(chapterText, offsetRef.current);
                     }
@@ -1065,11 +1148,20 @@ export function Reader({
                 </button>
                 <button
                   aria-label="Next sentence"
-                  onClick={() => ttsRef.current?.next()}
+                  onClick={ttsNext}
                   className="p-1 text-[var(--panel-muted)] transition hover:text-[var(--panel-fg)]"
                 >
                   <PlayerIcon d="M5 5 L15 12 L5 19 Z M17 5 v14" />
                 </button>
+                {pagination === 'paged' ? (
+                  <button
+                    aria-label="Next page"
+                    onClick={() => ttsTurnPage(1)}
+                    className="p-1 text-[var(--panel-muted)] transition hover:text-[var(--panel-fg)]"
+                  >
+                    <PlayerIcon d="M6 6 L12 12 L6 18 M12 6 L18 12 L12 18" />
+                  </button>
+                ) : null}
                 <button onClick={cycleRate} className="p-1 text-sm font-bold text-[var(--panel-muted)]">
                   {rate.toFixed(2).replace(/0$/, '')}×
                 </button>

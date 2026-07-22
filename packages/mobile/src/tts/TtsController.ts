@@ -30,7 +30,13 @@ export class TtsController {
   }
 
   load(chapterText: string, startOffset = 0): void {
-    this.stop();
+    // Cancel in-flight speech without stop()'s notify: at a chapter end the old
+    // index is past-the-end, so that notify would masquerade as a fresh
+    // "finished" event and advance the chapter a second time. Swap the queue in
+    // first, then emit exactly one clean status for the new chapter.
+    this.generation += 1;
+    this.playing = false;
+    void Speech.stop();
     this.sentences = splitSentences(chapterText);
     this.index = Math.max(
       0,

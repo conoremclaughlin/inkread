@@ -3,7 +3,7 @@ import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { StatusBar } from 'expo-status-bar';
 import type { RootStackParamList } from './src/navigation';
-import { loadSession } from './src/lib/api';
+import { loadSession, onSessionExpired } from './src/lib/api';
 import { syncNow } from './src/lib/sync';
 import { LibraryScreen } from './src/screens/LibraryScreen';
 import { LoginScreen } from './src/screens/LoginScreen';
@@ -21,6 +21,10 @@ export default function App() {
       setAuthed(ok);
       if (ok) void syncNow().catch(() => undefined);
     });
+    // The server rejected our refresh token: sync is dead until the user
+    // signs in again. Return to Login rather than silently serving an
+    // ever-staler cache with a broken sync loop.
+    onSessionExpired(() => setAuthed(false));
   }, []);
 
   if (authed === undefined) return null;
@@ -47,7 +51,11 @@ export default function App() {
         <Stack.Screen
           name="Reader"
           component={ReaderScreen}
-          options={({ route }) => ({ title: route.params.title, headerBackTitle: 'Library' })}
+          options={{
+            headerShown: false,
+            presentation: 'fullScreenModal',
+            animation: 'slide_from_bottom',
+          }}
         />
         <Stack.Screen
           name="Notes"

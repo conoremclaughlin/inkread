@@ -1985,6 +1985,7 @@ __metadata:
     "@react-navigation/native-stack": "npm:^7.17.7"
     "@types/react": "npm:~19.2.2"
     expo: "npm:~57.0.2"
+    expo-audio: "npm:~57.0.0"
     expo-document-picker: "npm:~57.0.0"
     expo-file-system: "npm:~57.0.0"
     expo-sharing: "npm:~57.0.2"
@@ -5774,6 +5775,18 @@ __metadata:
     react: "*"
     react-native: "*"
   checksum: 10/25511981e3397115cb2b06d9f7328e14ab5b8aadd3555fefabe4781107d5a41fad000e0d7c1782604ac608a8a41831c192f01ef8cc4dd7c95c5fe7919cbb351e
+  languageName: node
+  linkType: hard
+
+"expo-audio@npm:~57.0.0":
+  version: 57.0.2
+  resolution: "expo-audio@npm:57.0.2"
+  peerDependencies:
+    expo: "*"
+    expo-asset: "*"
+    react: "*"
+    react-native: "*"
+  checksum: 10/c59cfa95097672366447c521aa4ed23e4c91bde15e39353613d215afd42acb5e61a089376bedcadceb770ded4c558367a7d12233698e76fd9da9a539ee7a093c
   languageName: node
   linkType: hard
 
