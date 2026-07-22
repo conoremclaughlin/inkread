@@ -180,6 +180,19 @@ export class ClientStore {
     return row?.n ?? 0;
   }
 
+  /**
+   * Ids of books whose content is present on this device. `replaceChapters` is
+   * atomic, so any chapter rows mean the full book downloaded — this is the
+   * ground truth for "synced locally" vs "only in the cloud" (a book's
+   * `chapter_count` metadata is non-zero even before its content downloads).
+   */
+  async downloadedBookIds(): Promise<Set<string>> {
+    const rows = await this.driver.all<{ book_id: string }>(
+      'select distinct book_id from chapters',
+    );
+    return new Set(rows.map((row) => row.book_id));
+  }
+
   // --- annotations ----------------------------------------------------------
 
   async replaceAnnotations(bookId: string, annotations: Annotation[]): Promise<void> {
