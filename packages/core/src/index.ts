@@ -10,6 +10,7 @@ export {
   type SegmentOptions,
 } from './pdf/segment';
 export { exportAnnotationsMarkdown, formatPassageShare } from './export/markdown';
+export { exportAnnotationsCsv } from './export/csv';
 export {
   buildReaderHtml,
   HIGHLIGHT_COLORS,
