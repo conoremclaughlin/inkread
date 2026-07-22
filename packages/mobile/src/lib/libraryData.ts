@@ -84,6 +84,15 @@ export async function updateAnnotationNote(id: string, note: string | undefined)
   if (!response.ok) throw new Error('Saving requires a connection right now.');
 }
 
+export async function updateAnnotationColor(id: string, color: string): Promise<void> {
+  const response = await apiFetch(`/api/annotations/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ color }),
+  });
+  if (!response.ok) throw new Error('Saving requires a connection right now.');
+}
+
 export async function deleteAnnotation(id: string): Promise<void> {
   const response = await apiFetch(`/api/annotations/${id}`, { method: 'DELETE' });
   if (!response.ok) throw new Error('Deleting requires a connection right now.');
