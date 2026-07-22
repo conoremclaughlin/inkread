@@ -70,8 +70,12 @@ export class SyncEngine {
     let chaptersRefreshed = 0;
     for (const book of books) {
       const local = localBooks.get(book.id);
-      const haveChapters = (await this.store.countChapters(book.id)) > 0;
-      if (!local || local.updatedAt !== book.updatedAt || !haveChapters) {
+      // Refetch when the content we hold isn't for the current version. Using
+      // content_updated_at (not "any chapters exist") is what makes a failed
+      // content fetch retry next pull instead of stale chapters passing as
+      // current forever — upsertBooks above already advanced updated_at, so a
+      // 503 here must not be mistaken for "downloaded".
+      if (!local || local.contentUpdatedAt !== book.updatedAt) {
         if (await this.pullBookContent(book.id)) {
           chaptersRefreshed += 1;
         }

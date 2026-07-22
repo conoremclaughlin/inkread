@@ -6,7 +6,7 @@ import type { SqlDriver } from './driver';
  * remains the source of truth; this holds what a device needs to read
  * offline plus sync bookkeeping.
  */
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 const DDL = `
 create table if not exists meta (
@@ -22,7 +22,13 @@ create table if not exists books (
   source text not null default 'pdf',
   chapter_count integer not null default 0,
   created_at text not null,
-  updated_at text not null
+  updated_at text not null,
+  -- The updated_at whose chapter content is actually on this device. Null (or
+  -- != updated_at) means the local content is stale/absent for the current
+  -- version, so a content fetch is still owed. Kept distinct from updated_at so
+  -- a metadata bump whose content fetch later fails doesn't masquerade as
+  -- "downloaded" (which would skip the refetch forever).
+  content_updated_at text
 );
 
 create table if not exists chapters (
@@ -70,6 +76,16 @@ export async function initSchema(driver: SqlDriver): Promise<void> {
     await driver.run('alter table positions add column furthest_chapter_index integer not null default 0');
     await driver.run('alter table positions add column furthest_offset integer not null default 0');
     await driver.run('update positions set furthest_chapter_index = chapter_index, furthest_offset = char_offset');
+  }
+  if (from < 3) {
+    // v3: track which version's content is local. Existing rows that already
+    // have chapters are assumed current (their content matched their metadata
+    // when synced), so backfill rather than force a re-download of everything.
+    await driver.run('alter table books add column content_updated_at text');
+    await driver.run(
+      `update books set content_updated_at = updated_at
+       where exists (select 1 from chapters where chapters.book_id = books.id)`,
+    );
   }
   await driver.run(
     `insert into meta (key, value) values ('schema_version', ?)
