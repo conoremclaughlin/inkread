@@ -35,6 +35,7 @@ import {
   loadBook,
   persistPosition,
   refreshAnnotations,
+  updateAnnotationColor,
   updateAnnotationNote,
   type LoadedBook,
 } from '../lib/libraryData';
@@ -598,6 +599,23 @@ function ReaderInner({
     [book],
   );
 
+  const promptColor = useCallback(
+    (annotation: Annotation) => {
+      Alert.alert('Highlight color', undefined, [
+        ...(Object.keys(HIGHLIGHT_COLORS) as HighlightColor[]).map((color) => ({
+          text: color[0]!.toUpperCase() + color.slice(1) + (annotation.color === color ? '  ✓' : ''),
+          onPress: () => {
+            void updateAnnotationColor(annotation.id, color)
+              .then(reloadAnnotations)
+              .catch((error) => Alert.alert('Could not save', String(error.message ?? error)));
+          },
+        })),
+        { text: 'Cancel', style: 'cancel' as const },
+      ]);
+    },
+    [reloadAnnotations],
+  );
+
   const handleTapHighlight = useCallback(
     (id: string) => {
       const annotation = annotations.find((a) => a.id === id);
@@ -617,6 +635,7 @@ function ReaderInner({
                 }
               }, 'plain-text', annotation.note),
           },
+          { text: 'Change color', onPress: () => promptColor(annotation) },
           { text: 'Share', onPress: () => sharePassage(annotation.passage, annotation.note) },
           {
             text: 'Remove',
@@ -631,7 +650,7 @@ function ReaderInner({
         ],
       );
     },
-    [annotations, reloadAnnotations, sharePassage],
+    [annotations, promptColor, reloadAnnotations, sharePassage],
   );
 
   // --- Navigation ----------------------------------------------------------
@@ -865,6 +884,16 @@ function ReaderInner({
           <View style={[styles.grip, { backgroundColor: panel.border }]} />
         </View>
         <Text style={[styles.sheetTitle, dyn.fgText]}>Chapters</Text>
+        {furthest && chapterIndex < furthest.chapterIndex ? (
+          <Pressable
+            style={styles.tocRow}
+            onPress={() => goToChapter(furthest.chapterIndex, furthest.offset)}
+          >
+            <Text style={[styles.tocText, dyn.accentText, styles.tocActive]} numberOfLines={1}>
+              ↩ Go to where I left off
+            </Text>
+          </Pressable>
+        ) : null}
         <FlatList
           data={chapters}
           style={{ maxHeight: SHEET_LIST_MAX }}

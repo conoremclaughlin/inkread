@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation';
 import type { Annotation } from '@inkread/core';
 import { HIGHLIGHT_COLORS } from '@inkread/core';
 import { getRepository } from '@/lib/data';
+import { ExportMenu } from '@/components/ExportMenu';
 
 export default async function NotesPage({ params }: { params: Promise<{ bookId: string }> }) {
   const { bookId } = await params;
@@ -34,13 +35,8 @@ export default async function NotesPage({ params }: { params: Promise<{ bookId: 
             Notes · {book.title}
           </h1>
         </div>
-        <div className="flex shrink-0 gap-3 text-sm">
-          <a
-            href={`/api/books/${bookId}/export?format=markdown`}
-            className="whitespace-nowrap rounded-full bg-[#8b5e3c] px-4 py-2 font-semibold text-white transition hover:bg-[#75492c]"
-          >
-            Export Markdown
-          </a>
+        <div className="flex shrink-0 items-start gap-3 text-sm">
+          <ExportMenu bookId={bookId} />
           <a
             href={`/api/books/${bookId}/export?format=epub`}
             className="whitespace-nowrap rounded-full border border-[#8b5e3c] px-4 py-2 font-semibold text-[#8b5e3c] transition hover:bg-[#f0e6da]"

@@ -262,6 +262,14 @@ export class SupabaseLibraryRepository implements LibraryRepository {
     if (error) this.fail('updateAnnotationNote', error);
   }
 
+  async updateAnnotationColor(annotationId: string, color: string): Promise<void> {
+    const { error } = await this.supabase
+      .from('annotations')
+      .update({ color })
+      .eq('id', annotationId);
+    if (error) this.fail('updateAnnotationColor', error);
+  }
+
   async deleteAnnotation(annotationId: string): Promise<void> {
     const { error } = await this.supabase.from('annotations').delete().eq('id', annotationId);
     if (error) this.fail('deleteAnnotation', error);

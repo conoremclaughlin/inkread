@@ -514,6 +514,19 @@ export function Reader({
     [createHighlight, selection],
   );
 
+  const recolorAnnotation = useCallback(
+    async (id: string, color: HighlightColor) => {
+      setActing((a) => (a && a.id === id ? { ...a, color } : a));
+      await fetch(`/api/annotations/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ color }),
+      });
+      await reloadAnnotations();
+    },
+    [reloadAnnotations],
+  );
+
   // Cross-page highlight: anchor at the selection, flip pages, tap the end.
   const startExtend = useCallback(() => {
     if (!selection) return;
@@ -556,6 +569,15 @@ export function Reader({
     setTocOpen(false);
     setChapterIndex(index);
   }, []);
+
+  /** Jump back to the furthest point ever read (used by the TOC and the pill). */
+  const goToFurthest = useCallback(() => {
+    if (!furthest) return;
+    offsetRef.current = furthest.offset;
+    setSelection(undefined);
+    setTocOpen(false);
+    setChapterIndex(furthest.chapterIndex);
+  }, [furthest]);
 
   const toggleTts = useCallback(async () => {
     if (ttsOpen) {
@@ -710,6 +732,14 @@ export function Reader({
 
         {tocOpen ? (
           <nav className="absolute right-4 top-2 z-20 max-h-[70%] w-72 overflow-auto rounded-xl border border-[var(--panel-border)] bg-[var(--panel-bg)] p-2 text-[var(--panel-fg)] shadow-lg">
+            {furthest && chapterIndex < furthest.chapterIndex ? (
+              <button
+                onClick={goToFurthest}
+                className="mb-1 block w-full truncate rounded-lg px-3 py-2 text-left text-sm font-semibold text-[var(--panel-accent)] hover:bg-[#faf7f2]"
+              >
+                ↩ Go to where I left off
+              </button>
+            ) : null}
             {chapters.map((c, i) => (
               <button
                 key={i}
@@ -1054,6 +1084,20 @@ export function Reader({
                   {acting.note}
                 </p>
               ) : null}
+              <div className="mt-4 flex items-center gap-2">
+                {(Object.keys(HIGHLIGHT_COLORS) as HighlightColor[]).map((color) => (
+                  <button
+                    key={color}
+                    onClick={() => void recolorAnnotation(acting.id, color)}
+                    className="h-6 w-6 rounded-full border-2 transition"
+                    style={{
+                      background: `rgb(${HIGHLIGHT_COLORS[color]})`,
+                      borderColor: acting.color === color ? themeColors.fg : 'transparent',
+                    }}
+                    aria-label={`Recolor highlight ${color}`}
+                  />
+                ))}
+              </div>
               <div className="mt-4 flex items-center justify-between text-sm">
                 <button
                   onClick={() => {
@@ -1066,7 +1110,7 @@ export function Reader({
                   className="px-2 py-1 font-semibold"
                   style={{ color: '#cf4f3e' }}
                 >
-                  Delete
+                  Remove
                 </button>
                 <div className="flex gap-3">
                   <button
@@ -1197,11 +1241,7 @@ export function Reader({
 
       {furthest && chapterIndex < furthest.chapterIndex ? (
         <button
-          onClick={() => {
-            offsetRef.current = furthest.offset;
-            setSelection(undefined);
-            setChapterIndex(furthest.chapterIndex);
-          }}
+          onClick={goToFurthest}
           className="absolute bottom-14 right-6 z-10 rounded-full bg-[var(--panel-bg)] px-4 py-2 text-xs font-semibold text-[var(--panel-accent)] shadow-lg ring-1 ring-[var(--panel-border)] transition hover:bg-[var(--panel-accent-soft)]"
         >
           Resume at {chapters[furthest.chapterIndex]?.title ?? 'furthest point'} →

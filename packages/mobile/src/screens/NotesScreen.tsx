@@ -11,6 +11,7 @@ import {
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import * as Sharing from 'expo-sharing';
 import {
+  exportAnnotationsCsv,
   exportAnnotationsMarkdown,
   formatPassageShare,
   type Annotation,
@@ -61,19 +62,38 @@ export function NotesScreen({ route }: Props) {
     return [...byChapter.entries()].sort((a, b) => a[0] - b[0]).map(([, s]) => s);
   }, [annotations]);
 
-  const exportMarkdown = useCallback(async () => {
-    if (!book) return;
-    const markdown = exportAnnotationsMarkdown(book, annotations);
-    const safeName = book.title.replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '-');
-    const file = new File(Paths.cache, `${safeName || 'notes'}.md`);
-    if (file.exists) file.delete();
-    file.write(markdown);
-    if (await Sharing.isAvailableAsync()) {
-      await Sharing.shareAsync(file.uri, { mimeType: 'text/markdown', UTI: 'net.daringfireball.markdown' });
-    } else {
-      await Share.share({ message: markdown });
-    }
-  }, [annotations, book]);
+  const exportAs = useCallback(
+    async (format: 'markdown' | 'csv') => {
+      if (!book) return;
+      const isCsv = format === 'csv';
+      const content = isCsv
+        ? exportAnnotationsCsv(book, annotations)
+        : exportAnnotationsMarkdown(book, annotations);
+      const safeName = book.title.replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '-') || 'notes';
+      const file = new File(Paths.cache, `${safeName}.${isCsv ? 'csv' : 'md'}`);
+      if (file.exists) file.delete();
+      file.write(content);
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(
+          file.uri,
+          isCsv
+            ? { mimeType: 'text/csv', UTI: 'public.comma-separated-values-text' }
+            : { mimeType: 'text/markdown', UTI: 'net.daringfireball.markdown' },
+        );
+      } else {
+        await Share.share({ message: content });
+      }
+    },
+    [annotations, book],
+  );
+
+  const chooseExport = useCallback(() => {
+    Alert.alert('Export notes', 'Choose a format', [
+      { text: 'Markdown — paste into Notion', onPress: () => void exportAs('markdown') },
+      { text: 'CSV — Notion database or Sheets', onPress: () => void exportAs('csv') },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
+  }, [exportAs]);
 
   const shareEpub = useCallback(async () => {
     if (!book) return;
@@ -167,8 +187,8 @@ export function NotesScreen({ route }: Props) {
         }
       />
       <View style={styles.footer}>
-        <Pressable style={styles.footerButton} onPress={exportMarkdown}>
-          <Text style={styles.footerButtonText}>Export Markdown</Text>
+        <Pressable style={styles.footerButton} onPress={chooseExport}>
+          <Text style={styles.footerButtonText}>Export</Text>
         </Pressable>
         <Pressable style={[styles.footerButton, styles.footerSecondary]} onPress={shareEpub}>
           <Text style={[styles.footerButtonText, { color: colors.accent }]}>Share EPUB</Text>

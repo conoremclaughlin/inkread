@@ -5,7 +5,13 @@ import type { Annotation, BookMeta } from '../models/types';
  * Markdown that pastes cleanly into Notion, Obsidian, or an email.
  */
 
-function sortAnnotations(annotations: Annotation[]): Annotation[] {
+/** The chapter's title, falling back to a 1-based "Chapter N". */
+export function chapterLabel(annotation: Annotation): string {
+  return annotation.chapterTitle ?? `Chapter ${annotation.locator.chapterIndex + 1}`;
+}
+
+/** Reading order: by chapter, then by start offset within the chapter. */
+export function sortAnnotations(annotations: Annotation[]): Annotation[] {
   return annotations
     .slice()
     .sort(
@@ -38,9 +44,7 @@ export function exportAnnotationsMarkdown(
   for (const annotation of ordered) {
     if (annotation.locator.chapterIndex !== currentChapter) {
       currentChapter = annotation.locator.chapterIndex;
-      const title =
-        annotation.chapterTitle ?? `Chapter ${annotation.locator.chapterIndex + 1}`;
-      lines.push(`## ${title}`);
+      lines.push(`## ${chapterLabel(annotation)}`);
       lines.push('');
     }
     const quoted = annotation.passage

@@ -69,6 +69,7 @@ export interface LibraryRepository {
   listAnnotations(bookId: string): Promise<Annotation[]>;
   createAnnotation(input: CreateAnnotationInput): Promise<Annotation>;
   updateAnnotationNote(annotationId: string, note: string | undefined): Promise<void>;
+  updateAnnotationColor(annotationId: string, color: string): Promise<void>;
   deleteAnnotation(annotationId: string): Promise<void>;
 
   getPosition(bookId: string): Promise<ReadingPosition | undefined>;
