@@ -78,13 +78,17 @@ export async function initSchema(driver: SqlDriver): Promise<void> {
     await driver.run('update positions set furthest_chapter_index = chapter_index, furthest_offset = char_offset');
   }
   if (from < 3) {
-    // v3: track which version's content is local. Existing rows that already
-    // have chapters are assumed current (their content matched their metadata
-    // when synced), so backfill rather than force a re-download of everything.
+    // v3: track which version's content is local. Backfill only books whose
+    // local chapters are *complete* for the current metadata — local count ==
+    // chapter_count. A pre-v3 cache can already be stranded by the old bug
+    // (metadata advanced but content 503'd, so old/partial chapters sit under a
+    // newer updated_at); those have a count mismatch, stay null, and refetch
+    // once. Marking them current would cement the staleness forever.
     await driver.run('alter table books add column content_updated_at text');
     await driver.run(
       `update books set content_updated_at = updated_at
-       where exists (select 1 from chapters where chapters.book_id = books.id)`,
+       where chapter_count > 0
+         and chapter_count = (select count(*) from chapters where chapters.book_id = books.id)`,
     );
   }
   await driver.run(
