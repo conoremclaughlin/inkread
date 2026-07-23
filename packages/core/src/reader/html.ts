@@ -241,10 +241,9 @@ ${paragraphsHtml}
     return parseInt(p.getAttribute('data-po'), 10) + range.toString().length;
   }
 
-  // --- Cross-page selection: pick a start, flip pages, tap the end. ---
+  // --- Cross-page selection: pick a start, flip pages, click the end. ---
   var extending = false;
   var anchorOffset = 0;
-  var lastEnd = -1;
 
   function pointToOffset(x, y) {
     var node, off;
@@ -432,17 +431,10 @@ ${paragraphsHtml}
     else settlePage(0, dragBase);
   }, { passive: true });
 
-  // Desktop: the pending highlight follows the cursor live while extending.
-  document.addEventListener('pointermove', function (event) {
-    if (!extending || event.pointerType === 'touch') return;
-    var off = pointToOffset(event.clientX, event.clientY);
-    if (off == null) return;
-    var text = extendPreview(anchorOffset, off);
-    if (off !== lastEnd) {
-      lastEnd = off;
-      post({ type: 'extendPoint', start: Math.min(anchorOffset, off), end: Math.max(anchorOffset, off), text: text });
-    }
-  });
+  // The extend end is set by a click (see the click handler), not by cursor
+  // movement: a live follow meant that reaching for the confirm bar dragged the
+  // highlight down across the page. Click a word to set the end, click another
+  // to adjust, then pick a colour.
 
   if (PAGED) {
     document.addEventListener('keydown', function (event) {
@@ -546,7 +538,6 @@ ${paragraphsHtml}
       if (sel) sel.removeAllRanges();
       extending = true;
       anchorOffset = start;
-      lastEnd = -1;
       extendPreview(start, end); // keep the original selection visible as the range grows
     },
     endExtend: function () {
