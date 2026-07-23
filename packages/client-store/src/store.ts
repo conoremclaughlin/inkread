@@ -12,6 +12,12 @@ export interface CachedBook {
   chapterCount: number;
   createdAt: string;
   updatedAt: string;
+  /**
+   * The `updatedAt` whose chapter content is on this device, or undefined when
+   * none is (or the local copy is stale for the current version). Local-only
+   * bookkeeping — the sync API doesn't send it.
+   */
+  contentUpdatedAt?: string;
 }
 
 interface BookRow {
@@ -23,6 +29,7 @@ interface BookRow {
   chapter_count: number;
   created_at: string;
   updated_at: string;
+  content_updated_at: string | null;
 }
 
 interface AnnotationRow {
@@ -120,6 +127,7 @@ export class ClientStore {
       chapterCount: row.chapter_count,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
+      contentUpdatedAt: row.content_updated_at ?? undefined,
     }));
   }
 
@@ -158,6 +166,13 @@ export class ClientStore {
           [bookId, index, chapter.title, JSON.stringify(chapter.paragraphs)],
         );
       }
+      // Mark the content as current for whatever version the metadata is at now
+      // (sync upserts the book row before fetching content). Atomic with the
+      // chapter write, so the two never disagree.
+      await this.driver.run(
+        'update books set content_updated_at = updated_at where id = ?',
+        [bookId],
+      );
     });
   }
 
@@ -178,6 +193,20 @@ export class ClientStore {
       [bookId],
     );
     return row?.n ?? 0;
+  }
+
+  /**
+   * Ids of books whose *current* content is on this device — the ground truth
+   * for "synced locally" vs "only in the cloud". Requires content_updated_at to
+   * match updated_at, not merely that some chapters exist: a metadata bump whose
+   * content fetch failed leaves stale chapters under a newer updated_at, and
+   * that book is not yet downloaded for its current version.
+   */
+  async downloadedBookIds(): Promise<Set<string>> {
+    const rows = await this.driver.all<{ id: string }>(
+      'select id from books where content_updated_at is not null and content_updated_at = updated_at',
+    );
+    return new Set(rows.map((row) => row.id));
   }
 
   // --- annotations ----------------------------------------------------------
