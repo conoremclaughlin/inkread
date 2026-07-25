@@ -42,6 +42,16 @@ describe('ClientStore', () => {
     expect(await store.countChapters('b1')).toBe(2);
   });
 
+  it('reports only books with local content as downloaded', async () => {
+    // Two books in the library, but only one has its chapters on-device — the
+    // other is cloud-only (metadata synced, content not yet pulled).
+    await store.upsertBooks([BOOK, { ...BOOK, id: 'b2', title: 'Cloud only' }]);
+    await store.replaceChapters('b1', [{ title: 'One', paragraphs: ['Hi.'] }]);
+    const local = await store.downloadedBookIds();
+    expect(local.has('b1')).toBe(true);
+    expect(local.has('b2')).toBe(false);
+  });
+
   it('round-trips annotations and positions', async () => {
     await store.upsertBooks([BOOK]);
     await store.replaceAnnotations('b1', [

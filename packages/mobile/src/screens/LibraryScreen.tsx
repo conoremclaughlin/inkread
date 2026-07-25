@@ -7,6 +7,7 @@ import {
   StyleSheet,
   Text,
   View,
+  type ViewStyle,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -26,6 +27,60 @@ import { colors, tintFor } from '../ui/theme';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Library'>;
 
+/**
+ * A filled cloud silhouette drawn from overlapping views (like the reader's
+ * transport glyphs) so it takes the theme color and never renders as an emoji.
+ * Shown on library cards whose content lives only in the cloud, not on-device.
+ */
+function CloudIcon({ color, size = 13 }: { color: string; size?: number }) {
+  const w = size * 1.6;
+  const puff = (style: ViewStyle): ViewStyle => ({
+    position: 'absolute',
+    backgroundColor: color,
+    ...style,
+  });
+  return (
+    <View style={{ width: w, height: size }}>
+      <View
+        style={puff({
+          bottom: 0,
+          left: 0,
+          width: w,
+          height: size * 0.52,
+          borderRadius: size * 0.26,
+        })}
+      />
+      <View
+        style={puff({
+          bottom: size * 0.14,
+          left: w * 0.06,
+          width: size * 0.56,
+          height: size * 0.56,
+          borderRadius: size * 0.28,
+        })}
+      />
+      <View
+        style={puff({
+          bottom: size * 0.24,
+          left: w * 0.32,
+          width: size * 0.76,
+          height: size * 0.76,
+          borderRadius: size * 0.38,
+        })}
+      />
+      <View
+        style={puff({
+          bottom: size * 0.14,
+          right: w * 0.06,
+          width: size * 0.5,
+          height: size * 0.5,
+          borderRadius: size * 0.25,
+        })}
+      />
+    </View>
+  );
+}
+
 interface ImportJob {
   pdfBase64: string;
   fileName: string;
@@ -36,13 +91,20 @@ interface ImportJob {
 export function LibraryScreen({ navigation }: Props) {
   const [books, setBooks] = useState<CachedBook[]>([]);
   const [positions, setPositions] = useState<Map<string, ReadingPosition>>(new Map());
+  const [downloaded, setDownloaded] = useState<Set<string>>(new Set());
   const [job, setJob] = useState<ImportJob | undefined>();
 
   const reload = useCallback(() => {
     void (async () => {
       const store = await getClientStore();
       const list = await store.listBooks();
+      // Resolve local-content presence before setting state so books and their
+      // download status render together — otherwise the first paint shows every
+      // card as cloud-only until the set arrives, flashing icons on books that
+      // are actually on-device.
+      const local = await store.downloadedBookIds();
       setBooks(list);
+      setDownloaded(local);
       const entries = await Promise.all(
         list.map(async (book): Promise<[string, ReadingPosition | undefined]> => [
           book.id,
@@ -134,6 +196,7 @@ export function LibraryScreen({ navigation }: Props) {
       const progress = marker
         ? Math.round(((marker.chapterIndex + 1) / Math.max(1, item.chapterCount)) * 100)
         : 0;
+      const isLocal = downloaded.has(item.id);
       return (
         <Pressable
           style={styles.card}
@@ -146,9 +209,13 @@ export function LibraryScreen({ navigation }: Props) {
               {item.title}
             </Text>
             {item.author ? <Text style={styles.author}>{item.author}</Text> : null}
-            <Text style={styles.meta}>
-              {item.chapterCount} chapters{progress > 0 ? ` · ${progress}% read` : ''}
-            </Text>
+            <View style={styles.metaRow}>
+              {isLocal ? null : <CloudIcon color={colors.inkSoft} />}
+              <Text style={styles.meta}>
+                {item.chapterCount} chapters{progress > 0 ? ` · ${progress}% read` : ''}
+                {isLocal ? '' : ' · in cloud'}
+              </Text>
+            </View>
           </View>
           <Pressable
             hitSlop={12}
@@ -160,7 +227,7 @@ export function LibraryScreen({ navigation }: Props) {
         </Pressable>
       );
     },
-    [confirmDelete, navigation, positions],
+    [confirmDelete, downloaded, navigation, positions],
   );
 
   return (
@@ -230,7 +297,8 @@ const styles = StyleSheet.create({
   cardBody: { flex: 1, padding: 14 },
   title: { fontSize: 17, fontWeight: '600', color: colors.ink },
   author: { fontSize: 14, color: colors.inkSoft, marginTop: 2 },
-  meta: { fontSize: 12, color: colors.inkSoft, marginTop: 8 },
+  metaRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 8 },
+  meta: { fontSize: 12, color: colors.inkSoft },
   notesButton: { justifyContent: 'center', paddingHorizontal: 14 },
   notesButtonText: { color: colors.accent, fontWeight: '600' },
   empty: { alignItems: 'center', marginTop: 120, paddingHorizontal: 32 },

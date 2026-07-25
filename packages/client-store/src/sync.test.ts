@@ -145,4 +145,44 @@ describe('SyncEngine', () => {
     expect(result).toBeUndefined();
     expect((await store.getChapters('b1'))[0]!.paragraphs).toEqual(['Hello.']);
   });
+
+  it('retries content after a metadata bump whose content fetch failed', async () => {
+    // v1 fully synced and marked downloaded.
+    const v1 = makeApi({ books: [BOOK], chapters: { b1: [{ title: 'One', paragraphs: ['Hello.'] }] } });
+    await new SyncEngine(store, v1.fetcher).pull();
+    expect((await store.downloadedBookIds()).has('b1')).toBe(true);
+
+    // v2 metadata arrives, but the content endpoint is down this pull. pull()
+    // upserts the new updated_at before fetching content, so the guard against
+    // "stale chapters pass as current" is exactly what's under test.
+    const v2Meta = { ...BOOK, chapterCount: 2, updatedAt: '2026-07-02T00:00:00Z' };
+    const contentDown = async (path: string): Promise<Response> => {
+      if (path === '/api/books') return jsonResponse({ books: [v2Meta] });
+      if (/include=content/.test(path)) return jsonResponse({ error: 'offline' }, 503);
+      if (/\/annotations$/.test(path)) return jsonResponse({ annotations: [] });
+      if (/\/position$/.test(path)) return jsonResponse({ position: null });
+      return jsonResponse({ error: 'nf' }, 404);
+    };
+    const bumped = await new SyncEngine(store, contentDown).pull();
+    expect(bumped.chaptersRefreshed).toBe(0);
+    // Stale v1 chapters remain readable, but the book is NOT current-downloaded.
+    expect(await store.countChapters('b1')).toBe(1);
+    expect((await store.downloadedBookIds()).has('b1')).toBe(false);
+
+    // Content endpoint recovers: the next pull must re-fetch, not skip forever.
+    const v2 = makeApi({
+      books: [v2Meta],
+      chapters: {
+        b1: [
+          { title: 'One', paragraphs: ['Hello.'] },
+          { title: 'Two', paragraphs: ['World.'] },
+        ],
+      },
+    });
+    const healed = await new SyncEngine(store, v2.fetcher).pull();
+    expect(v2.calls.some((c) => c.includes('include=content'))).toBe(true);
+    expect(healed.chaptersRefreshed).toBe(1);
+    expect(await store.countChapters('b1')).toBe(2);
+    expect((await store.downloadedBookIds()).has('b1')).toBe(true);
+  });
 });
