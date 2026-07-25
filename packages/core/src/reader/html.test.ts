@@ -68,6 +68,12 @@ describe('buildReaderHtml', () => {
     expect(html).toContain("window.parent.postMessage({ source: 'inkread-reader'");
   });
 
+  it('includes selection bounds so the host can place the action bar below it', () => {
+    const html = buildReaderHtml(CHAPTER, [], { theme: 'light', fontSize: 18 });
+    expect(html).toContain('range.getBoundingClientRect()');
+    expect(html).toContain('bottom: rect.bottom');
+  });
+
   it('themes the page background per setting', () => {
     const dark = buildReaderHtml(CHAPTER, [], { theme: 'dark', fontSize: 18 });
     expect(dark).toContain('background: #121212');

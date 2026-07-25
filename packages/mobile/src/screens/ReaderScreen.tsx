@@ -58,6 +58,9 @@ interface Selection {
   start: number;
   end: number;
   text: string;
+  /** Selection bounds in WebView viewport space, for placing the action bar. */
+  top?: number;
+  bottom?: number;
 }
 
 const THEME_LABELS: Partial<Record<ReaderTheme, string>> = {
@@ -324,6 +327,9 @@ function ReaderInner({
       topPad: { paddingTop: insets.top + 4 },
       bottomPad: { paddingBottom: insets.bottom + 8 },
       accentText: { color: panel.accent },
+      // Top-bar chrome: the theme accent reads fine on light backgrounds, but on
+      // dark themes it's low-contrast — use the light foreground there instead.
+      chromeText: { color: panel.dark ? panel.fg : panel.accent },
       fgText: { color: panel.fg },
       mutedText: { color: panel.muted },
       faintText: { color: panel.faint },
@@ -332,11 +338,27 @@ function ReaderInner({
         backgroundColor: panel.bg,
         borderColor: panel.border,
         borderWidth: StyleSheet.hairlineWidth,
-        bottom: 84 + insets.bottom,
       },
     }),
     [panel, insets],
   );
+
+  // Place the selection action bar just below the selected text — flipping above
+  // near the bottom edge — so it never covers what you're annotating. Falls back
+  // to a fixed lower spot if the WebView didn't report selection bounds.
+  const selectionBarPosition = useMemo((): ViewStyle => {
+    if (!selection || selection.top == null || selection.bottom == null) {
+      return { bottom: 84 + insets.bottom };
+    }
+    const GAP = 10;
+    const BAR_HEIGHT = 56;
+    const viewportTop = insets.top; // the WebView starts below the safe-area top
+    const screenHeight = Dimensions.get('window').height;
+    const below = viewportTop + selection.bottom + GAP;
+    if (below + BAR_HEIGHT <= screenHeight - insets.bottom - 8) return { top: below };
+    const above = viewportTop + selection.top - BAR_HEIGHT - GAP;
+    return { top: Math.max(viewportTop + 8, above) };
+  }, [selection, insets]);
 
   // Chrome fades (fast) in and out rather than snapping.
   const chromeAnim = useRef(new Animated.Value(0)).current;
@@ -690,6 +712,8 @@ function ReaderInner({
               start: Number(msg.start),
               end: Number(msg.end),
               text: String(msg.text ?? ''),
+              top: typeof msg.top === 'number' ? msg.top : undefined,
+              bottom: typeof msg.bottom === 'number' ? msg.bottom : undefined,
             });
           }
           break;
@@ -780,13 +804,13 @@ function ReaderInner({
         </Pressable>
         <View style={styles.topActions}>
           <Pressable hitSlop={8} onPress={() => setTocVisible(true)}>
-            <Text style={[styles.toolbarButton, dyn.accentText]}>Chapters</Text>
+            <Text style={[styles.toolbarButton, dyn.chromeText]}>Chapters</Text>
           </Pressable>
           <Pressable hitSlop={8} onPress={() => setSettingsVisible(true)}>
-            <Text style={[styles.toolbarButton, dyn.accentText]}>Aa</Text>
+            <Text style={[styles.toolbarButton, dyn.chromeText]}>Aa</Text>
           </Pressable>
           <Pressable hitSlop={8} onPress={ttsVisible ? closeTts : openTts}>
-            <Text style={[styles.toolbarButton, ttsVisible ? { color: colors.danger } : dyn.accentText]}>
+            <Text style={[styles.toolbarButton, ttsVisible ? { color: colors.danger } : dyn.chromeText]}>
               {ttsVisible ? 'Stop' : 'Listen'}
             </Text>
           </Pressable>
@@ -794,7 +818,7 @@ function ReaderInner({
             hitSlop={8}
             onPress={() => navigation.navigate('Notes', { bookId, title: book.title })}
           >
-            <Text style={[styles.toolbarButton, dyn.accentText]}>Notes</Text>
+            <Text style={[styles.toolbarButton, dyn.chromeText]}>Notes</Text>
           </Pressable>
         </View>
       </Animated.View>
@@ -862,7 +886,7 @@ function ReaderInner({
       ) : null}
 
       {selection ? (
-        <View style={[styles.selectionBar, dyn.pill]}>
+        <View style={[styles.selectionBar, dyn.pill, selectionBarPosition]}>
           {(Object.keys(HIGHLIGHT_COLORS) as HighlightColor[]).map((color) => (
             <Pressable
               key={color}
@@ -870,11 +894,10 @@ function ReaderInner({
               onPress={() => addHighlight(color)}
             />
           ))}
+          {/* Share is intentionally omitted — iOS's native selection menu already
+              offers Copy/Share for the live selection; a second button is noise. */}
           <Pressable hitSlop={8} onPress={promptNote}>
             <Text style={[styles.selectionAction, dyn.accentText]}>Note</Text>
-          </Pressable>
-          <Pressable hitSlop={8} onPress={() => sharePassage(selection.text)}>
-            <Text style={[styles.selectionAction, dyn.accentText]}>Share</Text>
           </Pressable>
         </View>
       ) : null}
