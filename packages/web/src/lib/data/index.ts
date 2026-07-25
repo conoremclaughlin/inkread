@@ -5,7 +5,13 @@ import { createClient } from '../supabase/server';
 import type { LibraryRepository } from './repository';
 import { SupabaseLibraryRepository } from './supabase-repository';
 
-export type { BookSummary, CreateAnnotationInput, CreateBookInput, LibraryRepository } from './repository';
+export type {
+  BookSummary,
+  CreateAnnotationInput,
+  CreateCommentInput,
+  CreateBookInput,
+  LibraryRepository,
+} from './repository';
 
 export class UnauthorizedError extends Error {
   constructor() {
