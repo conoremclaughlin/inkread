@@ -2,6 +2,7 @@ import type {
   Annotation,
   BookMeta,
   Chapter,
+  ChapterRecording,
   Comment,
   ReadingPosition,
   VoiceCast,
@@ -98,6 +99,19 @@ export interface LibraryRepository {
   getVoiceCast(bookId: string): Promise<VoiceCast | undefined>;
   /** Upsert the cast (book owner only, enforced by RLS). */
   saveVoiceCast(cast: VoiceCast): Promise<void>;
+
+  /** Rendered multi-voice recordings. */
+  getChapterRecording(bookId: string, chapterIndex: number): Promise<ChapterRecording | undefined>;
+  listChapterRecordings(bookId: string): Promise<ChapterRecording[]>;
+  /** Register a rendered recording (book owner only). Upserts per chapter. */
+  saveChapterRecording(input: CreateChapterRecordingInput): Promise<ChapterRecording>;
+}
+
+export interface CreateChapterRecordingInput {
+  bookId: string;
+  chapterIndex: number;
+  storagePath: string;
+  durationSeconds?: number;
 }
 
 export interface CreateCommentInput {

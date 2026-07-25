@@ -31,5 +31,6 @@ export {
   type AttributedSentence,
 } from './voices/cast';
 export { splitSentences, type Sentence } from './tts/sentences';
+export { encodeWav, pcmDurationSeconds } from './audio/wav';
 export { textToChapters, type TextToChaptersOptions } from './text/segment';
 export { cleanGoogleDocText, googleDocToChapters } from './importers/googleDoc';

@@ -337,6 +337,68 @@ describe.skipIf(!up)('SupabaseLibraryRepository (integration)', () => {
     await repository.deleteBook(book.id);
   });
 
+  it('registers chapter recordings; readers read, only the owner writes', async () => {
+    const book = await repository.createBook({
+      title: 'Recorded Book',
+      source: 'text',
+      chapters: [{ title: 'One', paragraphs: ['Audio here.'] }],
+    });
+
+    expect(await repository.getChapterRecording(book.id, 0)).toBeUndefined();
+
+    const rec = await repository.saveChapterRecording({
+      bookId: book.id,
+      chapterIndex: 0,
+      storagePath: `${book.id}/0.wav`,
+      durationSeconds: 12.5,
+    });
+    expect(rec.storagePath).toBe(`${book.id}/0.wav`);
+    expect(rec.durationSeconds).toBe(12.5);
+    expect((await repository.getChapterRecording(book.id, 0))?.id).toBe(rec.id);
+    expect(await repository.listChapterRecordings(book.id)).toHaveLength(1);
+
+    // Upsert per (book, chapter) replaces in place.
+    await repository.saveChapterRecording({
+      bookId: book.id,
+      chapterIndex: 0,
+      storagePath: `${book.id}/0-v2.wav`,
+    });
+    expect((await repository.getChapterRecording(book.id, 0))?.storagePath).toBe(`${book.id}/0-v2.wav`);
+    expect(await repository.listChapterRecordings(book.id)).toHaveLength(1);
+
+    // Reader reads; non-owner write is RLS-blocked.
+    const otherEmail = `repo-test-rec-${Math.random().toString(36).slice(2, 10)}@inkread.test`;
+    const { data: other, error } = await admin.auth.admin.createUser({
+      email: otherEmail,
+      password: 'integration-test-pw',
+      email_confirm: true,
+    });
+    if (error) throw error;
+    try {
+      const otherClient = createClient(SUPABASE_URL, PUBLISHABLE_KEY, {
+        auth: { persistSession: false },
+      });
+      await otherClient.auth.signInWithPassword({
+        email: otherEmail,
+        password: 'integration-test-pw',
+      });
+      const otherRepo = new SupabaseLibraryRepository(otherClient, other.user.id);
+      expect((await otherRepo.getChapterRecording(book.id, 0))?.storagePath).toBe(
+        `${book.id}/0-v2.wav`,
+      );
+      await otherRepo
+        .saveChapterRecording({ bookId: book.id, chapterIndex: 0, storagePath: 'hijack.wav' })
+        .catch(() => undefined);
+      expect((await repository.getChapterRecording(book.id, 0))?.storagePath).toBe(
+        `${book.id}/0-v2.wav`,
+      );
+    } finally {
+      await admin.auth.admin.deleteUser(other.user.id);
+    }
+
+    await repository.deleteBook(book.id);
+  });
+
   it('deletes a book and cascades its content', async () => {
     const book = (await repository.listBooks())[0]!;
     await repository.deleteBook(book.id);
