@@ -34,7 +34,7 @@
     "start:online": "expo start",
     "android": "expo start --offline --android",
     "ios": "expo start --offline --ios",
-    "ios:device": "EXPO_OFFLINE=1 expo run:ios --device",
+    "ios:device": "node scripts/run-ios.mjs",
     "ios:release": "node scripts/run-ios.mjs --configuration Release",
     "web": "expo start --offline --web",
     "test": "vitest run",

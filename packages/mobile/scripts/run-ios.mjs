@@ -1,11 +1,14 @@
 // Build + run the app on a connected device with EXPO_PUBLIC_API_URL baked to
-// this Mac's current LAN IP.
+// this Mac's current LAN IP. Used by BOTH ios:device (dev) and ios:release
+// (prod) so every on-device install reaches the web API deterministically —
+// regardless of which network you're on — unless you set an override yourself.
 //
-// Why: a dev build reads the API host from Metro at runtime (see src/lib/api.ts),
-// but a *Release* build has no Metro — so without help it falls back to
-// localhost, which on a phone is the phone itself, and never reaches the web
-// API on the Mac. Computing the IP at build time keeps this self-healing across
-// network/DHCP changes, the same way the dev path does — just resolved earlier.
+// Why: a dev build could read the API host from Metro at runtime (see
+// src/lib/api.ts), but a *Release* build has no Metro, so without help it falls
+// back to localhost — which on a phone is the phone itself, never reaching the
+// web API on the Mac. Baking the IP at build time makes both paths self-heal
+// across network/DHCP changes, and keeps dev and prod on-device behaviour
+// identical (one less variable when testing).
 //
 // An explicit EXPO_PUBLIC_API_URL (e.g. a real deployed API for a shipping
 // build) is always respected and never overwritten.
