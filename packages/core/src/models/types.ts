@@ -89,6 +89,20 @@ export interface Comment {
   createdAt: string;
 }
 
+/**
+ * A stored multi-voice audio recording of a chapter — rendered from a VoiceCast
+ * and saved so anyone with access to the book can listen later.
+ */
+export interface ChapterRecording {
+  id: string;
+  bookId: string;
+  chapterIndex: number;
+  /** Object path in the recordings storage bucket. */
+  storagePath: string;
+  durationSeconds?: number;
+  createdAt: string;
+}
+
 /** Reading position, persisted per book. */
 export interface ReadingPosition {
   bookId: string;

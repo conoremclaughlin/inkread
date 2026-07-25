@@ -3,6 +3,7 @@ import type {
   Annotation,
   AnnotationKind,
   Chapter,
+  ChapterRecording,
   Comment,
   HighlightColor,
   ReadingPosition,
@@ -13,6 +14,7 @@ import type {
 import type {
   BookSummary,
   CreateAnnotationInput,
+  CreateChapterRecordingInput,
   CreateCommentInput,
   CreateBookInput,
   LibraryRepository,
@@ -95,6 +97,26 @@ function rowToComment(row: CommentRow): Comment {
     authorId: row.user_id,
     authorName: row.author_name ?? undefined,
     body: row.body,
+    createdAt: row.created_at,
+  };
+}
+
+interface RecordingRow {
+  id: string;
+  book_id: string;
+  chapter_index: number;
+  storage_path: string;
+  duration_seconds: number | null;
+  created_at: string;
+}
+
+function rowToRecording(row: RecordingRow): ChapterRecording {
+  return {
+    id: row.id,
+    bookId: row.book_id,
+    chapterIndex: row.chapter_index,
+    storagePath: row.storage_path,
+    durationSeconds: row.duration_seconds ?? undefined,
     createdAt: row.created_at,
   };
 }
@@ -427,5 +449,49 @@ export class SupabaseLibraryRepository implements LibraryRepository {
       { onConflict: 'book_id' },
     );
     if (error) this.fail('saveVoiceCast', error);
+  }
+
+  async getChapterRecording(
+    bookId: string,
+    chapterIndex: number,
+  ): Promise<ChapterRecording | undefined> {
+    const { data, error } = await this.supabase
+      .from('chapter_recordings')
+      .select('*')
+      .eq('book_id', bookId)
+      .eq('chapter_index', chapterIndex)
+      .maybeSingle();
+    if (error) this.fail('getChapterRecording', error);
+    return data ? rowToRecording(data as RecordingRow) : undefined;
+  }
+
+  async listChapterRecordings(bookId: string): Promise<ChapterRecording[]> {
+    const { data, error } = await this.supabase
+      .from('chapter_recordings')
+      .select('*')
+      .eq('book_id', bookId)
+      .order('chapter_index');
+    if (error) this.fail('listChapterRecordings', error);
+    return (data as RecordingRow[]).map(rowToRecording);
+  }
+
+  async saveChapterRecording(input: CreateChapterRecordingInput): Promise<ChapterRecording> {
+    // RLS: only the book owner may write. Upserts per (book, chapter).
+    const { data, error } = await this.supabase
+      .from('chapter_recordings')
+      .upsert(
+        {
+          book_id: input.bookId,
+          chapter_index: input.chapterIndex,
+          created_by: this.userId,
+          storage_path: input.storagePath,
+          duration_seconds: input.durationSeconds ?? null,
+        },
+        { onConflict: 'book_id,chapter_index' },
+      )
+      .select()
+      .single();
+    if (error) this.fail('saveChapterRecording', error);
+    return rowToRecording(data as RecordingRow);
   }
 }

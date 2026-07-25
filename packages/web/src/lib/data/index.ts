@@ -8,6 +8,7 @@ import { SupabaseLibraryRepository } from './supabase-repository';
 export type {
   BookSummary,
   CreateAnnotationInput,
+  CreateChapterRecordingInput,
   CreateCommentInput,
   CreateBookInput,
   LibraryRepository,
