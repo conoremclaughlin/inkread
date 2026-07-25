@@ -18,6 +18,7 @@ import { WebTtsController } from '@/lib/tts';
 import { KokoroTtsController, KOKORO_DEFAULT_VOICE } from '@/lib/tts/kokoro';
 import { KOKORO_VOICES } from '@/lib/tts/voices';
 import { useIsElectron } from '@/lib/useIsElectron';
+import { CommentsDrawer } from '@/components/CommentsDrawer';
 
 type TtsPlayer = WebTtsController | KokoroTtsController;
 type TtsEngine = 'kokoro' | 'system';
@@ -30,6 +31,8 @@ interface ReaderProps {
   initialPreferences?: ReaderPreferences;
   /** Reading from the device cache; server writes are skipped. */
   offline?: boolean;
+  /** Signed-in user id — enables deleting your own comments. */
+  currentUserId?: string;
 }
 
 interface Selection {
@@ -93,10 +96,12 @@ export function Reader({
   initialPosition,
   initialPreferences,
   offline,
+  currentUserId,
 }: ReaderProps) {
   const [chapterIndex, setChapterIndex] = useState(
     Math.min(initialPosition?.chapterIndex ?? 0, chapters.length - 1),
   );
+  const [commentsOpen, setCommentsOpen] = useState(false);
   const [themeMode, setThemeMode] = useState<'fixed' | 'auto'>(
     (initialPreferences?.themeMode as 'fixed' | 'auto') ?? 'fixed',
   );
@@ -715,11 +720,39 @@ export function Reader({
           >
             {ttsOpen ? 'Stop' : 'Listen'}
           </button>
+          <button
+            onClick={() => {
+              closeMenus();
+              setCommentsOpen(true);
+            }}
+            className={chromeButton}
+          >
+            Comments
+          </button>
           <Link href={`/notes/${book.id}`} onClick={teardownTts} className={chromeButton}>
             Notes
           </Link>
+          <Link href={`/voice/${book.id}`} onClick={teardownTts} className={chromeButton}>
+            Voices
+          </Link>
         </div>
       </header>
+
+      <CommentsDrawer
+        bookId={book.id}
+        chapterIndex={chapterIndex}
+        chapterTitle={chapter?.title ?? ''}
+        currentUserId={currentUserId}
+        open={commentsOpen}
+        onClose={() => setCommentsOpen(false)}
+        colors={{
+          bg: themeColors.bg,
+          fg: themeColors.fg,
+          accent: themeColors.accent,
+          muted: mutedColor,
+          border: panelStyle.borderColor,
+        }}
+      />
 
       <div className={`relative flex-1 ${ttsOpen ? 'pb-14' : ''}`}>
         <iframe

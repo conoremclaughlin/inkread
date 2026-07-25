@@ -3,12 +3,17 @@ import type {
   Annotation,
   AnnotationKind,
   Chapter,
+  Comment,
   HighlightColor,
   ReadingPosition,
+  Speaker,
+  VoiceCast,
+  VoiceRule,
 } from '@inkread/core';
 import type {
   BookSummary,
   CreateAnnotationInput,
+  CreateCommentInput,
   CreateBookInput,
   LibraryRepository,
   ReaderPreferences,
@@ -68,6 +73,28 @@ function rowToAnnotation(row: AnnotationRow): Annotation {
     note: row.note ?? undefined,
     color: row.color as HighlightColor,
     chapterTitle: row.chapter_title ?? undefined,
+    createdAt: row.created_at,
+  };
+}
+
+interface CommentRow {
+  id: string;
+  book_id: string;
+  user_id: string;
+  chapter_index: number;
+  author_name: string | null;
+  body: string;
+  created_at: string;
+}
+
+function rowToComment(row: CommentRow): Comment {
+  return {
+    id: row.id,
+    bookId: row.book_id,
+    chapterIndex: row.chapter_index,
+    authorId: row.user_id,
+    authorName: row.author_name ?? undefined,
+    body: row.body,
     createdAt: row.created_at,
   };
 }
@@ -327,5 +354,78 @@ export class SupabaseLibraryRepository implements LibraryRepository {
       { onConflict: 'book_id,user_id' },
     );
     if (error) this.fail('savePosition', error);
+  }
+
+  async listComments(bookId: string, chapterIndex: number): Promise<Comment[]> {
+    const { data, error } = await this.supabase
+      .from('comments')
+      .select('*')
+      .eq('book_id', bookId)
+      .eq('chapter_index', chapterIndex)
+      .order('created_at', { ascending: true });
+    if (error) this.fail('listComments', error);
+    return (data as CommentRow[]).map(rowToComment);
+  }
+
+  async createComment(input: CreateCommentInput): Promise<Comment> {
+    // Denormalize a display name from the signed-in user's email local-part.
+    const { data: userData } = await this.supabase.auth.getUser();
+    const authorName = userData.user?.email?.split('@')[0] ?? null;
+    const { data, error } = await this.supabase
+      .from('comments')
+      .insert({
+        book_id: input.bookId,
+        user_id: this.userId,
+        chapter_index: input.chapterIndex,
+        author_name: authorName,
+        body: input.body.trim(),
+      })
+      .select()
+      .single();
+    if (error) this.fail('createComment', error);
+    return rowToComment(data as CommentRow);
+  }
+
+  async deleteComment(commentId: string): Promise<void> {
+    // RLS enforces author-only deletion.
+    const { error } = await this.supabase.from('comments').delete().eq('id', commentId);
+    if (error) this.fail('deleteComment', error);
+  }
+
+  async getVoiceCast(bookId: string): Promise<VoiceCast | undefined> {
+    const { data, error } = await this.supabase
+      .from('voice_casts')
+      .select('speakers, rules, default_speaker_id')
+      .eq('book_id', bookId)
+      .maybeSingle();
+    if (error) this.fail('getVoiceCast', error);
+    if (!data) return undefined;
+    const row = data as {
+      speakers: Speaker[] | null;
+      rules: VoiceRule[] | null;
+      default_speaker_id: string | null;
+    };
+    return {
+      bookId,
+      speakers: row.speakers ?? [],
+      rules: row.rules ?? [],
+      defaultSpeakerId: row.default_speaker_id ?? '',
+    };
+  }
+
+  async saveVoiceCast(cast: VoiceCast): Promise<void> {
+    // RLS: only the book owner may write.
+    const { error } = await this.supabase.from('voice_casts').upsert(
+      {
+        book_id: cast.bookId,
+        updated_by: this.userId,
+        speakers: cast.speakers,
+        rules: cast.rules,
+        default_speaker_id: cast.defaultSpeakerId,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'book_id' },
+    );
+    if (error) this.fail('saveVoiceCast', error);
   }
 }

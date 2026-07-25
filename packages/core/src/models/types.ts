@@ -74,6 +74,21 @@ export interface Annotation {
   createdAt: string;
 }
 
+/**
+ * A reader's comment on a chapter — the social layer. Anchored per-chapter
+ * (not per-highlight) to start; visible to everyone with access to the book.
+ */
+export interface Comment {
+  id: string;
+  bookId: string;
+  chapterIndex: number;
+  authorId: string;
+  /** Display name, denormalized so the list never needs a user lookup. */
+  authorName?: string;
+  body: string;
+  createdAt: string;
+}
+
 /** Reading position, persisted per book. */
 export interface ReadingPosition {
   bookId: string;

@@ -1,4 +1,11 @@
-import type { Annotation, BookMeta, Chapter, ReadingPosition } from '@inkread/core';
+import type {
+  Annotation,
+  BookMeta,
+  Chapter,
+  Comment,
+  ReadingPosition,
+  VoiceCast,
+} from '@inkread/core';
 
 /**
  * The app's data boundary. Route handlers and pages depend on this
@@ -81,4 +88,20 @@ export interface LibraryRepository {
 
   getPosition(bookId: string): Promise<ReadingPosition | undefined>;
   savePosition(position: Omit<ReadingPosition, 'updatedAt'>): Promise<void>;
+
+  /** Reader comments on a chapter, oldest first. */
+  listComments(bookId: string, chapterIndex: number): Promise<Comment[]>;
+  createComment(input: CreateCommentInput): Promise<Comment>;
+  deleteComment(commentId: string): Promise<void>;
+
+  /** The book's multi-voice cast, or undefined if none has been set up. */
+  getVoiceCast(bookId: string): Promise<VoiceCast | undefined>;
+  /** Upsert the cast (book owner only, enforced by RLS). */
+  saveVoiceCast(cast: VoiceCast): Promise<void>;
+}
+
+export interface CreateCommentInput {
+  bookId: string;
+  chapterIndex: number;
+  body: string;
 }
