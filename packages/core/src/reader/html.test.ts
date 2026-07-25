@@ -74,6 +74,14 @@ describe('buildReaderHtml', () => {
     expect(html).toContain('bottom: rect.bottom');
   });
 
+  it('exposes the cross-page extend bridge the hosts drive', () => {
+    const html = buildReaderHtml(CHAPTER, [], { theme: 'light', fontSize: 18 });
+    // mobile + web call these to run the anchor → flip pages → tap-end flow.
+    expect(html).toContain('beginExtend: function');
+    expect(html).toContain('endExtend: function');
+    expect(html).toContain("post({ type: 'extendPoint'");
+  });
+
   it('themes the page background per setting', () => {
     const dark = buildReaderHtml(CHAPTER, [], { theme: 'dark', fontSize: 18 });
     expect(dark).toContain('background: #121212');
