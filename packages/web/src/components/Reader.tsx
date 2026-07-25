@@ -732,6 +732,9 @@ export function Reader({
           <Link href={`/notes/${book.id}`} onClick={teardownTts} className={chromeButton}>
             Notes
           </Link>
+          <Link href={`/voice/${book.id}`} onClick={teardownTts} className={chromeButton}>
+            Voices
+          </Link>
         </div>
       </header>
 

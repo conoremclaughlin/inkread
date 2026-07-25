@@ -51,15 +51,27 @@ interface CompiledPattern {
 }
 
 /**
- * Attribute one chapter's sentences to speakers, merging adjacent same-speaker
- * sentences into segments. `paragraphs.join('\n')` matches the reader's offset
- * convention, so manual ranges line up with annotation offsets.
+ * One sentence attributed to a speaker (unmerged). The editor renders these as
+ * a clickable, colour-coded list — click a sentence to override its speaker.
  */
-export function castChapter(
+export interface AttributedSentence {
+  text: string;
+  start: number;
+  end: number;
+  speakerId: string;
+  voiceId?: string;
+}
+
+/**
+ * Per-sentence attribution for a chapter: manual range → pattern → narrator.
+ * `paragraphs.join('\n')` matches the reader's offset convention, so manual
+ * ranges line up with annotation offsets.
+ */
+export function attributeSentences(
   paragraphs: string[],
   chapterIndex: number,
   cast: VoiceCast,
-): AttributedSegment[] {
+): AttributedSentence[] {
   const text = paragraphs.join('\n');
   const sentences = splitSentences(text);
   if (sentences.length === 0) return [];
@@ -92,22 +104,61 @@ export function castChapter(
     return cast.defaultSpeakerId;
   };
 
-  const segments: AttributedSegment[] = [];
-  for (const sentence of sentences) {
+  return sentences.map((sentence) => {
     const speakerId = speakerFor(sentence);
+    return {
+      text: sentence.text,
+      start: sentence.start,
+      end: sentence.end,
+      speakerId,
+      voiceId: voiceById.get(speakerId),
+    };
+  });
+}
+
+/**
+ * Attribute a chapter and merge adjacent same-speaker sentences into segments —
+ * the "script" real-time playback and recording consume.
+ */
+export function castChapter(
+  paragraphs: string[],
+  chapterIndex: number,
+  cast: VoiceCast,
+): AttributedSegment[] {
+  const text = paragraphs.join('\n');
+  const segments: AttributedSegment[] = [];
+  for (const sentence of attributeSentences(paragraphs, chapterIndex, cast)) {
     const last = segments[segments.length - 1];
-    if (last && last.speakerId === speakerId) {
+    if (last && last.speakerId === sentence.speakerId) {
       last.end = sentence.end;
       last.text = text.slice(last.start, sentence.end);
     } else {
-      segments.push({
-        text: sentence.text,
-        start: sentence.start,
-        end: sentence.end,
-        speakerId,
-        voiceId: voiceById.get(speakerId),
-      });
+      segments.push({ ...sentence });
     }
   }
   return segments;
+}
+
+/**
+ * Editor helper: toggle a sentence's manual speaker override. Clicking a
+ * sentence already assigned to `speakerId` clears the override (reverting to
+ * pattern/narrator); otherwise it (re)assigns that exact range to `speakerId`.
+ * Pure so the editor's core edit is unit-testable.
+ */
+export function toggleSentenceSpeaker(
+  rules: VoiceRule[],
+  chapterIndex: number,
+  start: number,
+  end: number,
+  speakerId: string,
+): VoiceRule[] {
+  const isSame = (rule: VoiceRule): boolean =>
+    rule.kind === 'manual' &&
+    rule.chapterIndex === chapterIndex &&
+    rule.start === start &&
+    rule.end === end;
+  const existing = rules.find(isSame) as ManualRule | undefined;
+  const without = rules.filter((rule) => !isSame(rule));
+  if (existing && existing.speakerId === speakerId) return without; // toggle off
+  return [...without, { kind: 'manual', chapterIndex, start, end, speakerId }];
 }

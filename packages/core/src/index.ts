@@ -22,10 +22,13 @@ export {
 export { paginate, pageOfLine, type LineBox, type Page } from './reader/pagination';
 export {
   castChapter,
+  attributeSentences,
+  toggleSentenceSpeaker,
   type Speaker,
   type VoiceRule,
   type VoiceCast,
   type AttributedSegment,
+  type AttributedSentence,
 } from './voices/cast';
 export { splitSentences, type Sentence } from './tts/sentences';
 export { textToChapters, type TextToChaptersOptions } from './text/segment';
