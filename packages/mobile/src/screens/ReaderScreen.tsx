@@ -293,6 +293,12 @@ function ReaderInner({
   );
   const [annotations, setAnnotations] = useState<Annotation[]>(loaded.annotations);
   const [selection, setSelection] = useState<Selection | undefined>();
+  // Cross-page highlight: anchored at a selection, then you flip pages (edge
+  // taps when paged, or scroll) and tap where the highlight should end.
+  const [extend, setExtend] = useState<
+    { anchor: number; anchorText: string; range?: { start: number; end: number; text: string } }
+    | undefined
+  >();
   const [furthest, setFurthest] = useState(initialPosition?.furthest);
   // Immersive by default: pure text, tap the center to summon the chrome.
   const [chromeVisible, setChromeVisible] = useState(false);
@@ -606,6 +612,44 @@ function ReaderInner({
     [bookId, chapter, chapterIndex, reloadAnnotations, selection],
   );
 
+  const startExtend = useCallback(() => {
+    if (!selection) return;
+    setExtend({
+      anchor: selection.start,
+      anchorText: selection.text,
+      range: { start: selection.start, end: selection.end, text: selection.text },
+    });
+    webviewRef.current?.injectJavaScript(
+      `window.__reader && window.__reader.beginExtend(${selection.start}, ${selection.end});true;`,
+    );
+    setSelection(undefined);
+  }, [selection]);
+
+  const cancelExtend = useCallback(() => {
+    webviewRef.current?.injectJavaScript('window.__reader && window.__reader.endExtend();true;');
+    setExtend(undefined);
+  }, []);
+
+  const confirmExtend = useCallback(
+    (color: HighlightColor) => {
+      const range = extend?.range;
+      if (!range || !chapter) return;
+      webviewRef.current?.injectJavaScript('window.__reader && window.__reader.endExtend();true;');
+      setExtend(undefined);
+      void createAnnotation(bookId, {
+        chapterIndex,
+        start: range.start,
+        end: range.end,
+        passage: range.text,
+        color,
+        chapterTitle: chapter.title,
+      })
+        .then(reloadAnnotations)
+        .catch((error) => Alert.alert('Could not save', String(error.message ?? error)));
+    },
+    [bookId, chapter, chapterIndex, extend, reloadAnnotations],
+  );
+
   const promptNote = useCallback(() => {
     if (!selection) return;
     Alert.prompt('Add note', selection.text.slice(0, 120), (note) => {
@@ -681,6 +725,7 @@ function ReaderInner({
       if (index < 0 || index >= chapters.length) return;
       restoreOffsetRef.current = offset;
       setSelection(undefined);
+      setExtend(undefined);
       setChapterIndex(index);
       setTocVisible(false);
     },
@@ -716,6 +761,20 @@ function ReaderInner({
               bottom: typeof msg.bottom === 'number' ? msg.bottom : undefined,
             });
           }
+          break;
+        case 'extendPoint':
+          setExtend((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  range: {
+                    start: Number(msg.start),
+                    end: Number(msg.end),
+                    text: String(msg.text ?? ''),
+                  },
+                }
+              : prev,
+          );
           break;
         case 'scroll': {
           const offset = Number(msg.offset) || 0;
@@ -899,6 +958,34 @@ function ReaderInner({
           <Pressable hitSlop={8} onPress={promptNote}>
             <Text style={[styles.selectionAction, dyn.accentText]}>Note</Text>
           </Pressable>
+          <Pressable hitSlop={8} onPress={startExtend}>
+            <Text style={[styles.selectionAction, dyn.accentText]}>Extend</Text>
+          </Pressable>
+        </View>
+      ) : null}
+
+      {/* Extend mode: the bar stays put at the bottom while you flip pages (edge
+          taps when paged, scroll otherwise) and tap where the highlight ends. */}
+      {extend ? (
+        <View
+          style={[styles.extendWrap, { bottom: 84 + insets.bottom }]}
+          pointerEvents="box-none"
+        >
+          <Text style={[styles.extendHint, dyn.pill, dyn.mutedText]}>
+            Tap where the highlight ends, then pick a colour
+          </Text>
+          <View style={[styles.extendBar, dyn.pill]}>
+            {(Object.keys(HIGHLIGHT_COLORS) as HighlightColor[]).map((color) => (
+              <Pressable
+                key={color}
+                style={[styles.colorDot, { backgroundColor: `rgb(${HIGHLIGHT_COLORS[color]})` }]}
+                onPress={() => confirmExtend(color)}
+              />
+            ))}
+            <Pressable hitSlop={8} onPress={cancelExtend}>
+              <Text style={[styles.selectionAction, dyn.accentText]}>Cancel</Text>
+            </Pressable>
+          </View>
         </View>
       ) : null}
 
@@ -1146,6 +1233,27 @@ const styles = StyleSheet.create({
   },
   colorDot: { width: 22, height: 22, borderRadius: 11 },
   selectionAction: { color: colors.accent, fontWeight: '700' },
+  extendWrap: { position: 'absolute', left: 0, right: 0, alignItems: 'center', gap: 8 },
+  extendHint: {
+    fontSize: 12,
+    fontWeight: '600',
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 14,
+    overflow: 'hidden',
+  },
+  extendBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    borderRadius: 22,
+    paddingHorizontal: 18,
+    paddingVertical: 11,
+    shadowColor: '#000',
+    shadowOpacity: 0.25,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+  },
   sheetGrip: { alignItems: 'center', paddingTop: 8 },
   grip: { width: 36, height: 4, borderRadius: 2, opacity: 0.6 },
   sheetTitle: { fontSize: 17, fontWeight: '700', paddingHorizontal: 16, paddingTop: 10, paddingBottom: 12 },
