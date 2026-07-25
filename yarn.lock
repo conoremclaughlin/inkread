@@ -1331,6 +1331,17 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@expo/env@npm:~2.4.2":
+  version: 2.4.2
+  resolution: "@expo/env@npm:2.4.2"
+  dependencies:
+    chalk: "npm:^4.0.0"
+    debug: "npm:^4.3.4"
+    getenv: "npm:^2.0.0"
+  checksum: 10/684fb2903525faffc02ed1b93599d1b79ea62f787a610ee1c489642c8d32b9f9b6af272ce6785fbe29c301f13641ec9cdc73e405aebb4db606fd409c04b2eea8
+  languageName: node
+  linkType: hard
+
 "@expo/expo-modules-macros-plugin@npm:0.3.0":
   version: 0.3.0
   resolution: "@expo/expo-modules-macros-plugin@npm:0.3.0"
@@ -1986,6 +1997,7 @@ __metadata:
     "@types/react": "npm:~19.2.2"
     expo: "npm:~57.0.2"
     expo-audio: "npm:~57.0.0"
+    expo-constants: "npm:~57.0.0"
     expo-document-picker: "npm:~57.0.0"
     expo-file-system: "npm:~57.0.0"
     expo-sharing: "npm:~57.0.2"
@@ -5787,6 +5799,18 @@ __metadata:
     react: "*"
     react-native: "*"
   checksum: 10/c59cfa95097672366447c521aa4ed23e4c91bde15e39353613d215afd42acb5e61a089376bedcadceb770ded4c558367a7d12233698e76fd9da9a539ee7a093c
+  languageName: node
+  linkType: hard
+
+"expo-constants@npm:~57.0.0":
+  version: 57.0.7
+  resolution: "expo-constants@npm:57.0.7"
+  dependencies:
+    "@expo/env": "npm:~2.4.2"
+  peerDependencies:
+    expo: "*"
+    react-native: "*"
+  checksum: 10/50c294472f19417e5e1a33879e30b72580b09a5f12efc4823d500d963018e527b4e1757ba676a2aaa866ef5427a56d88e8922aa0485e975d3be3232f3ba24c2f
   languageName: node
   linkType: hard
 
