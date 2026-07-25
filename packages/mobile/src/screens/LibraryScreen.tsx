@@ -20,6 +20,7 @@ import { SAMPLE_PDF_BASE64, SAMPLE_PDF_TITLE } from '../assets/samplePdf';
 import { bytesToBase64 } from '../lib/base64';
 import { apiFetch } from '../lib/api';
 import { syncNow } from '../lib/sync';
+import { useAuth } from '../lib/authContext';
 import { finishConversion } from '../convert/convertPdf';
 import { PdfExtractor, type PdfMeta } from '../pdf/PdfExtractor';
 import { getClientStore } from '../store/clientStore';
@@ -89,10 +90,23 @@ interface ImportJob {
 }
 
 export function LibraryScreen({ navigation }: Props) {
+  const { authed } = useAuth();
   const [books, setBooks] = useState<CachedBook[]>([]);
   const [positions, setPositions] = useState<Map<string, ReadingPosition>>(new Map());
   const [downloaded, setDownloaded] = useState<Set<string>>(new Set());
   const [job, setJob] = useState<ImportJob | undefined>();
+
+  // Creating and downloading books both need the server. Nudge to sign in
+  // rather than letting the action fail — but never gate reading local books.
+  const promptSignIn = useCallback(
+    (message: string) => {
+      Alert.alert('Sign in', message, [
+        { text: 'Not now', style: 'cancel' },
+        { text: 'Sign in', onPress: () => navigation.navigate('Login') },
+      ]);
+    },
+    [navigation],
+  );
 
   const reload = useCallback(() => {
     void (async () => {
@@ -125,6 +139,10 @@ export function LibraryScreen({ navigation }: Props) {
   );
 
   const startImport = useCallback(async () => {
+    if (!authed) {
+      promptSignIn('Sign in to import books and sync them across your devices.');
+      return;
+    }
     const result = await DocumentPicker.getDocumentAsync({
       type: 'application/pdf',
       copyToCacheDirectory: true,
@@ -142,16 +160,20 @@ export function LibraryScreen({ navigation }: Props) {
     } catch (error) {
       Alert.alert('Import failed', String(error instanceof Error ? error.message : error));
     }
-  }, []);
+  }, [authed, promptSignIn]);
 
   const startSampleImport = useCallback(() => {
+    if (!authed) {
+      promptSignIn('Sign in to add the sample book and sync it across your devices.');
+      return;
+    }
     setJob({
       pdfBase64: SAMPLE_PDF_BASE64,
       fileName: SAMPLE_PDF_TITLE,
       pagesDone: 0,
       pageCount: 0,
     });
-  }, []);
+  }, [authed, promptSignIn]);
 
   const handleDone = useCallback(
     (pages: PdfPage[], meta: PdfMeta) => {
@@ -200,7 +222,13 @@ export function LibraryScreen({ navigation }: Props) {
       return (
         <Pressable
           style={styles.card}
-          onPress={() => navigation.navigate('Reader', { bookId: item.id, title: item.title })}
+          onPress={() =>
+            !isLocal && !authed
+              ? promptSignIn(
+                  `“${item.title}” lives in the cloud. Sign in to download it to this device.`,
+                )
+              : navigation.navigate('Reader', { bookId: item.id, title: item.title })
+          }
           onLongPress={() => confirmDelete(item)}
         >
           <View style={[styles.spine, { backgroundColor: tintFor(item.id) }]} />
@@ -227,7 +255,7 @@ export function LibraryScreen({ navigation }: Props) {
         </Pressable>
       );
     },
-    [confirmDelete, downloaded, navigation, positions],
+    [authed, confirmDelete, downloaded, navigation, positions, promptSignIn],
   );
 
   return (
@@ -237,6 +265,16 @@ export function LibraryScreen({ navigation }: Props) {
         keyExtractor={(book) => book.id}
         renderItem={renderBook}
         contentContainerStyle={styles.list}
+        ListHeaderComponent={
+          authed ? null : (
+            <Pressable style={styles.banner} onPress={() => navigation.navigate('Login')}>
+              <Text style={styles.bannerText}>
+                Signed out — reading offline. <Text style={styles.bannerCta}>Sign in</Text> to sync
+                and download cloud books.
+              </Text>
+            </Pressable>
+          )
+        }
         ListEmptyComponent={
           <View style={styles.empty}>
             <Text style={styles.emptyTitle}>Your library is empty</Text>
@@ -284,6 +322,17 @@ export function LibraryScreen({ navigation }: Props) {
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.bg },
   list: { padding: 16, paddingBottom: 96 },
+  banner: {
+    backgroundColor: colors.card,
+    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginBottom: 12,
+  },
+  bannerText: { color: colors.inkSoft, fontSize: 13, lineHeight: 19 },
+  bannerCta: { color: colors.accent, fontWeight: '700' },
   card: {
     flexDirection: 'row',
     backgroundColor: colors.card,
