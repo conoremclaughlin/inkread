@@ -46,6 +46,29 @@ interface AnnotationRow {
   created_at: string;
 }
 
+/** An annotation mutation queued while offline, awaiting delivery. */
+export type OutboxOp = 'create' | 'update' | 'delete';
+
+export interface OutboxEntry {
+  seq: number;
+  op: OutboxOp;
+  annotationId: string;
+  /** Set on 'create' — the POST target (/api/books/:bookId/annotations). */
+  bookId?: string;
+  /** Body for 'create'/'update'; absent for 'delete'. */
+  payload?: Record<string, unknown>;
+  createdAt: string;
+}
+
+interface OutboxRow {
+  seq: number;
+  op: string;
+  annotation_id: string;
+  book_id: string | null;
+  payload_json: string | null;
+  created_at: string;
+}
+
 /** Local read/write surface over the cache tables. */
 export class ClientStore {
   constructor(private readonly driver: SqlDriver) {}
@@ -211,28 +234,90 @@ export class ClientStore {
 
   // --- annotations ----------------------------------------------------------
 
+  /** Insert-or-replace one annotation row (id is the primary key). */
+  private async putAnnotation(annotation: Annotation): Promise<void> {
+    await this.driver.run(
+      `insert into annotations
+         (id, book_id, kind, chapter_index, start_offset, end_offset, passage, note, color, chapter_title, created_at)
+       values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       on conflict (id) do update set
+         kind = excluded.kind, note = excluded.note, color = excluded.color,
+         passage = excluded.passage, chapter_title = excluded.chapter_title`,
+      [
+        annotation.id,
+        annotation.bookId,
+        annotation.kind,
+        annotation.locator.chapterIndex,
+        annotation.locator.start,
+        annotation.locator.end,
+        annotation.passage,
+        annotation.note ?? null,
+        annotation.color,
+        annotation.chapterTitle ?? null,
+        annotation.createdAt,
+      ],
+    );
+  }
+
+  /**
+   * Overwrite a book's annotations with the server's set — but never touch
+   * rows with a pending outbox entry. A background pull would otherwise wipe a
+   * highlight the user just made offline (pending create), revert an unpushed
+   * edit (pending update), or resurrect one deleted offline (pending delete).
+   * Those ids stay locally owned until the outbox drains. Atomic so a crash
+   * mid-replace can't strand a partial set.
+   */
   async replaceAnnotations(bookId: string, annotations: Annotation[]): Promise<void> {
-    await this.driver.run('delete from annotations where book_id = ?', [bookId]);
-    for (const annotation of annotations) {
-      await this.driver.run(
-        `insert into annotations
-           (id, book_id, kind, chapter_index, start_offset, end_offset, passage, note, color, chapter_title, created_at)
-         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          annotation.id,
-          annotation.bookId,
-          annotation.kind,
-          annotation.locator.chapterIndex,
-          annotation.locator.start,
-          annotation.locator.end,
-          annotation.passage,
-          annotation.note ?? null,
-          annotation.color,
-          annotation.chapterTitle ?? null,
-          annotation.createdAt,
-        ],
+    const pending = await this.pendingAnnotationIds();
+    await this.atomically(async () => {
+      const existing = await this.driver.all<{ id: string }>(
+        'select id from annotations where book_id = ?',
+        [bookId],
       );
+      for (const { id } of existing) {
+        if (!pending.has(id)) {
+          await this.driver.run('delete from annotations where id = ?', [id]);
+        }
+      }
+      for (const annotation of annotations) {
+        if (pending.has(annotation.id)) continue;
+        await this.putAnnotation(annotation);
+      }
+    });
+  }
+
+  /** Local-first insert of a single annotation (offline create). */
+  async insertAnnotation(annotation: Annotation): Promise<void> {
+    await this.putAnnotation(annotation);
+  }
+
+  /** Patch the mutable fields of one annotation in place. */
+  async updateAnnotation(
+    id: string,
+    patch: { note?: string | null; color?: string; kind?: Annotation['kind'] },
+  ): Promise<void> {
+    const sets: string[] = [];
+    const params: SqlParam[] = [];
+    if ('note' in patch) {
+      sets.push('note = ?');
+      params.push(patch.note ?? null);
     }
+    if ('color' in patch) {
+      sets.push('color = ?');
+      params.push(patch.color!);
+    }
+    if ('kind' in patch) {
+      sets.push('kind = ?');
+      params.push(patch.kind!);
+    }
+    if (sets.length === 0) return;
+    params.push(id);
+    await this.driver.run(`update annotations set ${sets.join(', ')} where id = ?`, params);
+  }
+
+  /** Remove one annotation by id (offline delete). */
+  async deleteAnnotationById(id: string): Promise<void> {
+    await this.driver.run('delete from annotations where id = ?', [id]);
   }
 
   async listAnnotations(bookId: string): Promise<Annotation[]> {
@@ -255,6 +340,57 @@ export class ClientStore {
       chapterTitle: row.chapter_title ?? undefined,
       createdAt: row.created_at,
     }));
+  }
+
+  // --- outbox ---------------------------------------------------------------
+
+  /** Queue an annotation mutation for delivery. seq auto-assigns (FIFO). */
+  async enqueueOutbox(entry: Omit<OutboxEntry, 'seq'>): Promise<void> {
+    await this.driver.run(
+      `insert into outbox (op, annotation_id, book_id, payload_json, created_at)
+       values (?, ?, ?, ?, ?)`,
+      [
+        entry.op,
+        entry.annotationId,
+        entry.bookId ?? null,
+        entry.payload ? JSON.stringify(entry.payload) : null,
+        entry.createdAt,
+      ],
+    );
+  }
+
+  /** Pending mutations in delivery order (oldest first). */
+  async listOutbox(): Promise<OutboxEntry[]> {
+    const rows = await this.driver.all<OutboxRow>(
+      'select seq, op, annotation_id, book_id, payload_json, created_at from outbox order by seq',
+    );
+    return rows.map((row) => ({
+      seq: row.seq,
+      op: row.op as OutboxOp,
+      annotationId: row.annotation_id,
+      bookId: row.book_id ?? undefined,
+      payload: row.payload_json
+        ? (JSON.parse(row.payload_json) as Record<string, unknown>)
+        : undefined,
+      createdAt: row.created_at,
+    }));
+  }
+
+  async deleteOutboxEntry(seq: number): Promise<void> {
+    await this.driver.run('delete from outbox where seq = ?', [seq]);
+  }
+
+  async outboxSize(): Promise<number> {
+    const row = await this.driver.get<{ n: number }>('select count(*) as n from outbox');
+    return row?.n ?? 0;
+  }
+
+  /** Annotation ids with an un-drained mutation — locally owned until pushed. */
+  private async pendingAnnotationIds(): Promise<Set<string>> {
+    const rows = await this.driver.all<{ annotation_id: string }>(
+      'select distinct annotation_id from outbox',
+    );
+    return new Set(rows.map((row) => row.annotation_id));
   }
 
   // --- positions ------------------------------------------------------------

@@ -234,22 +234,26 @@ export class SupabaseLibraryRepository implements LibraryRepository {
   }
 
   async createAnnotation(input: CreateAnnotationInput): Promise<Annotation> {
-    const { data, error } = await this.supabase
-      .from('annotations')
-      .insert({
-        user_id: this.userId,
-        book_id: input.bookId,
-        kind: input.kind,
-        chapter_index: input.chapterIndex,
-        start_offset: input.start,
-        end_offset: input.end,
-        passage: input.passage,
-        note: input.note ?? null,
-        color: input.color,
-        chapter_title: input.chapterTitle ?? null,
-      })
-      .select()
-      .single();
+    const row = {
+      user_id: this.userId,
+      book_id: input.bookId,
+      kind: input.kind,
+      chapter_index: input.chapterIndex,
+      start_offset: input.start,
+      end_offset: input.end,
+      passage: input.passage,
+      note: input.note ?? null,
+      color: input.color,
+      chapter_title: input.chapterTitle ?? null,
+      ...(input.id ? { id: input.id } : {}),
+    };
+    // A client-supplied id upserts so a retried offline create is idempotent
+    // (RLS still scopes the row to this user). Without one, insert and let the
+    // server assign the id.
+    const query = input.id
+      ? this.supabase.from('annotations').upsert(row, { onConflict: 'id' })
+      : this.supabase.from('annotations').insert(row);
+    const { data, error } = await query.select().single();
     if (error) this.fail('createAnnotation', error);
     return rowToAnnotation(data as AnnotationRow);
   }

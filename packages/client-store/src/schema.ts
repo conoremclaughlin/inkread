@@ -63,6 +63,19 @@ create table if not exists positions (
   furthest_offset integer not null default 0,
   updated_at text not null
 );
+
+-- Durable queue of annotation mutations made while offline (Phase B writes).
+-- FIFO by seq; drained on reconnect. A brand-new table needs no version-gated
+-- migration — 'create table if not exists' materializes it on both fresh
+-- installs and existing v1/v2/v3 caches, so SCHEMA_VERSION stays unchanged.
+create table if not exists outbox (
+  seq integer primary key,
+  op text not null,
+  annotation_id text not null,
+  book_id text,
+  payload_json text,
+  created_at text not null
+);
 `;
 
 export async function initSchema(driver: SqlDriver): Promise<void> {

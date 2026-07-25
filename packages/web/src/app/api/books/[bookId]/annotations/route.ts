@@ -32,6 +32,9 @@ export async function POST(request: Request, { params }: Params) {
     }
     const annotation = await repository.createAnnotation({
       bookId,
+      // Offline clients generate the id up front; delivering it twice upserts
+      // rather than duplicates. Omitted by online clients (server assigns one).
+      id: body.id,
       kind: body.note ? 'note' : 'highlight',
       chapterIndex: body.chapterIndex,
       start: body.start,

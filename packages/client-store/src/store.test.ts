@@ -1,6 +1,19 @@
+import type { Annotation } from '@inkread/core';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { ClientStore } from './store';
 import { testDriver } from './test-utils';
+
+function annotation(over: Partial<Annotation> & { id: string }): Annotation {
+  return {
+    bookId: 'b1',
+    kind: 'highlight',
+    locator: { chapterIndex: 0, start: 0, end: 5 },
+    passage: 'Hello',
+    color: 'yellow',
+    createdAt: '2026-07-20T00:00:00Z',
+    ...over,
+  };
+}
 
 const BOOK = {
   id: 'b1',
@@ -152,5 +165,92 @@ describe('ClientStore', () => {
     await txnStore.replaceChapters('b1', [{ title: 'One', paragraphs: ['Hi.'] }]);
     expect(used).toBe(1);
     expect(await txnStore.countChapters('b1')).toBe(1);
+  });
+});
+
+describe('ClientStore local-first annotations + outbox', () => {
+  it('inserts, patches, and deletes a single annotation', async () => {
+    await store.insertAnnotation(annotation({ id: 'a1' }));
+    expect(await store.listAnnotations('b1')).toHaveLength(1);
+
+    // Adding a note flips kind highlight -> note; a color patch is independent.
+    await store.updateAnnotation('a1', { note: 'later', kind: 'note' });
+    await store.updateAnnotation('a1', { color: 'blue' });
+    const [a] = await store.listAnnotations('b1');
+    expect(a!.note).toBe('later');
+    expect(a!.kind).toBe('note');
+    expect(a!.color).toBe('blue');
+
+    await store.deleteAnnotationById('a1');
+    expect(await store.listAnnotations('b1')).toHaveLength(0);
+  });
+
+  it('queues and drains outbox entries FIFO', async () => {
+    await store.enqueueOutbox({
+      op: 'create',
+      annotationId: 'a1',
+      bookId: 'b1',
+      payload: { id: 'a1', color: 'yellow' },
+      createdAt: '2026-07-20T00:00:00Z',
+    });
+    await store.enqueueOutbox({
+      op: 'update',
+      annotationId: 'a1',
+      payload: { color: 'blue' },
+      createdAt: '2026-07-20T00:01:00Z',
+    });
+    const entries = await store.listOutbox();
+    expect(entries.map((e) => e.op)).toEqual(['create', 'update']);
+    expect(entries[0]!.payload).toEqual({ id: 'a1', color: 'yellow' });
+    expect(entries[0]!.bookId).toBe('b1');
+    expect(await store.outboxSize()).toBe(2);
+
+    await store.deleteOutboxEntry(entries[0]!.seq);
+    expect((await store.listOutbox()).map((e) => e.op)).toEqual(['update']);
+  });
+
+  it('replaceAnnotations preserves an offline-created annotation (pending create)', async () => {
+    await store.insertAnnotation(annotation({ id: 'local1', passage: 'Mine' }));
+    await store.enqueueOutbox({
+      op: 'create',
+      annotationId: 'local1',
+      bookId: 'b1',
+      payload: {},
+      createdAt: '2026-07-20T00:00:00Z',
+    });
+    // A pull returns the server's set, which doesn't know about local1 yet.
+    await store.replaceAnnotations('b1', [annotation({ id: 'server1', passage: 'Theirs' })]);
+    const ids = (await store.listAnnotations('b1')).map((a) => a.id).sort();
+    expect(ids).toEqual(['local1', 'server1']);
+  });
+
+  it('replaceAnnotations does not revert an unpushed edit (pending update)', async () => {
+    // Server copy is yellow; the user recolored it blue offline.
+    await store.insertAnnotation(annotation({ id: 'a1', color: 'blue' }));
+    await store.enqueueOutbox({
+      op: 'update',
+      annotationId: 'a1',
+      payload: { color: 'blue' },
+      createdAt: '2026-07-20T00:00:00Z',
+    });
+    await store.replaceAnnotations('b1', [annotation({ id: 'a1', color: 'yellow' })]);
+    expect((await store.listAnnotations('b1'))[0]!.color).toBe('blue');
+  });
+
+  it('replaceAnnotations does not resurrect an offline delete (pending delete)', async () => {
+    // Deleted locally; the server still returns it until the delete is pushed.
+    await store.enqueueOutbox({
+      op: 'delete',
+      annotationId: 'a1',
+      createdAt: '2026-07-20T00:00:00Z',
+    });
+    await store.replaceAnnotations('b1', [annotation({ id: 'a1' })]);
+    expect(await store.listAnnotations('b1')).toHaveLength(0);
+  });
+
+  it('replaceAnnotations fully replaces when nothing is pending', async () => {
+    await store.insertAnnotation(annotation({ id: 'old' }));
+    await store.replaceAnnotations('b1', [annotation({ id: 'new' })]);
+    expect((await store.listAnnotations('b1')).map((a) => a.id)).toEqual(['new']);
   });
 });

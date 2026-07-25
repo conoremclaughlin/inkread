@@ -21,6 +21,13 @@ export interface CreateBookInput {
 
 export interface CreateAnnotationInput {
   bookId: string;
+  /**
+   * Client-supplied id. Offline-first clients generate the id up front so a
+   * highlight has a stable identity before it reaches the server; delivering
+   * the same id twice (a retried write) upserts rather than duplicates. Omitted
+   * by online clients, in which case the server assigns one.
+   */
+  id?: string;
   kind: 'highlight' | 'note';
   chapterIndex: number;
   start: number;
