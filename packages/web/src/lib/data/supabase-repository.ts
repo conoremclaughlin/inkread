@@ -6,6 +6,9 @@ import type {
   Comment,
   HighlightColor,
   ReadingPosition,
+  Speaker,
+  VoiceCast,
+  VoiceRule,
 } from '@inkread/core';
 import type {
   BookSummary,
@@ -387,5 +390,42 @@ export class SupabaseLibraryRepository implements LibraryRepository {
     // RLS enforces author-only deletion.
     const { error } = await this.supabase.from('comments').delete().eq('id', commentId);
     if (error) this.fail('deleteComment', error);
+  }
+
+  async getVoiceCast(bookId: string): Promise<VoiceCast | undefined> {
+    const { data, error } = await this.supabase
+      .from('voice_casts')
+      .select('speakers, rules, default_speaker_id')
+      .eq('book_id', bookId)
+      .maybeSingle();
+    if (error) this.fail('getVoiceCast', error);
+    if (!data) return undefined;
+    const row = data as {
+      speakers: Speaker[] | null;
+      rules: VoiceRule[] | null;
+      default_speaker_id: string | null;
+    };
+    return {
+      bookId,
+      speakers: row.speakers ?? [],
+      rules: row.rules ?? [],
+      defaultSpeakerId: row.default_speaker_id ?? '',
+    };
+  }
+
+  async saveVoiceCast(cast: VoiceCast): Promise<void> {
+    // RLS: only the book owner may write.
+    const { error } = await this.supabase.from('voice_casts').upsert(
+      {
+        book_id: cast.bookId,
+        updated_by: this.userId,
+        speakers: cast.speakers,
+        rules: cast.rules,
+        default_speaker_id: cast.defaultSpeakerId,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'book_id' },
+    );
+    if (error) this.fail('saveVoiceCast', error);
   }
 }

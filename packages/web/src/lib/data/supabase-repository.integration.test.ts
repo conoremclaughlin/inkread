@@ -278,6 +278,65 @@ describe.skipIf(!up)('SupabaseLibraryRepository (integration)', () => {
     await repository.deleteBook(book.id);
   });
 
+  it('stores a book voice cast; readers read it, only the owner writes', async () => {
+    const book = await repository.createBook({
+      title: 'Voiced Book',
+      source: 'text',
+      chapters: [{ title: 'One', paragraphs: ['Narration. "Dialogue," said Alice.'] }],
+    });
+
+    expect(await repository.getVoiceCast(book.id)).toBeUndefined();
+
+    const cast = {
+      bookId: book.id,
+      speakers: [
+        { id: 'nar', name: 'Narrator', voiceId: 'v-nar' },
+        { id: 'alice', name: 'Alice', voiceId: 'v-alice' },
+      ],
+      rules: [{ kind: 'pattern' as const, pattern: '^"', speakerId: 'alice' }],
+      defaultSpeakerId: 'nar',
+    };
+    await repository.saveVoiceCast(cast);
+
+    const loaded = await repository.getVoiceCast(book.id);
+    expect(loaded?.speakers.map((s) => s.id)).toEqual(['nar', 'alice']);
+    expect(loaded?.rules).toHaveLength(1);
+    expect(loaded?.defaultSpeakerId).toBe('nar');
+
+    // Upsert replaces in place.
+    await repository.saveVoiceCast({ ...cast, defaultSpeakerId: 'alice' });
+    expect((await repository.getVoiceCast(book.id))?.defaultSpeakerId).toBe('alice');
+
+    // Another reader can READ but not WRITE (RLS) — the owner's cast survives.
+    const otherEmail = `repo-test-voice-${Math.random().toString(36).slice(2, 10)}@inkread.test`;
+    const { data: other, error } = await admin.auth.admin.createUser({
+      email: otherEmail,
+      password: 'integration-test-pw',
+      email_confirm: true,
+    });
+    if (error) throw error;
+    try {
+      const otherClient = createClient(SUPABASE_URL, PUBLISHABLE_KEY, {
+        auth: { persistSession: false },
+      });
+      await otherClient.auth.signInWithPassword({
+        email: otherEmail,
+        password: 'integration-test-pw',
+      });
+      const otherRepo = new SupabaseLibraryRepository(otherClient, other.user.id);
+
+      expect((await otherRepo.getVoiceCast(book.id))?.speakers).toHaveLength(2);
+      await otherRepo
+        .saveVoiceCast({ ...cast, defaultSpeakerId: 'hijacked' })
+        .catch(() => undefined); // RLS blocks it — may throw or no-op
+      expect((await repository.getVoiceCast(book.id))?.defaultSpeakerId).toBe('alice');
+    } finally {
+      await admin.auth.admin.deleteUser(other.user.id);
+    }
+
+    await repository.deleteBook(book.id);
+  });
+
   it('deletes a book and cascades its content', async () => {
     const book = (await repository.listBooks())[0]!;
     await repository.deleteBook(book.id);
