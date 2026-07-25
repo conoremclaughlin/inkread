@@ -147,7 +147,15 @@ export function Reader({
   const [layoutOpen, setLayoutOpen] = useState(false);
   const [typeOpen, setTypeOpen] = useState(false);
   const [noteEditor, setNoteEditor] = useState<
-    { passage: string; draft: string; annotationId?: string } | undefined
+    {
+      passage: string;
+      draft: string;
+      annotationId?: string;
+      /** Set when saving a note that also creates a highlight for this range
+       *  (e.g. from extend mode, where there's no live selection). */
+      range?: { start: number; end: number; text: string };
+    }
+    | undefined
   >();
   const [acting, setActing] = useState<Annotation | undefined>();
   const [extend, setExtend] = useState<
@@ -973,24 +981,47 @@ export function Reader({
             className="absolute bottom-16 left-1/2 z-10 w-[min(92vw,32rem)] -translate-x-1/2 rounded-2xl border px-4 py-3 shadow-xl"
             style={panelStyle}
           >
-            <p className="mb-2 text-center text-xs italic" style={{ color: mutedColor }}>
-              {extend.range
-                ? `“${rangePreview(extend.range.text)}”`
-                : 'Click where the highlight ends, then pick a colour'}
+            <p className="text-center text-xs" style={{ color: mutedColor }}>
+              Click a word where the highlight should end.
             </p>
-            <div className="flex items-center justify-center gap-2">
+            {extend.range ? (
+              <p className="mt-1 text-center text-xs italic" style={{ color: mutedColor }}>
+                “{rangePreview(extend.range.text)}”
+              </p>
+            ) : null}
+            <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
               {(Object.keys(HIGHLIGHT_COLORS) as HighlightColor[]).map((color) => (
                 <button
                   key={color}
-                  aria-label={`Highlight ${color}`}
+                  aria-label={`Save ${color} highlight`}
+                  title={`Save as ${color}`}
                   onClick={() => void confirmExtend(color)}
                   className="h-5 w-5 rounded-full ring-[#26221c]/25 ring-offset-1 transition hover:scale-110 hover:ring-2"
                   style={{ background: `rgb(${HIGHLIGHT_COLORS[color]})` }}
                 />
               ))}
               <button
+                onClick={() => void confirmExtend('yellow')}
+                className="ml-1 rounded-full px-3 py-1 text-sm font-semibold transition hover:opacity-90"
+                style={{ background: themeColors.accent, color: themeColors.bg }}
+              >
+                Save
+              </button>
+              <button
+                onClick={() => {
+                  const range = extend.range;
+                  bridge()?.endExtend();
+                  setExtend(undefined);
+                  if (range) setNoteEditor({ passage: range.text, draft: '', range });
+                }}
+                className="rounded-lg px-2 py-1 text-sm font-semibold transition hover:opacity-70"
+                style={{ color: themeColors.accent }}
+              >
+                Note
+              </button>
+              <button
                 onClick={cancelExtend}
-                className="ml-1 rounded-lg px-2 py-1 text-sm font-semibold transition hover:opacity-70"
+                className="rounded-lg px-2 py-1 text-sm font-semibold transition hover:opacity-70"
                 style={{ color: mutedColor }}
               >
                 Cancel
@@ -1035,6 +1066,15 @@ export function Reader({
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ note: note || null }),
                       }).then(reloadAnnotations);
+                    } else if (editor.range) {
+                      // Extend → Note: create the highlight for the extended range.
+                      void createHighlight(
+                        editor.range.start,
+                        editor.range.end,
+                        editor.range.text,
+                        'yellow',
+                        note || undefined,
+                      );
                     } else {
                       void addHighlight('yellow', note || undefined);
                     }
