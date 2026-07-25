@@ -5,7 +5,6 @@ import { StatusBar } from 'expo-status-bar';
 import type { RootStackParamList } from './src/navigation';
 import { loadSession, onSessionExpired } from './src/lib/api';
 import { AuthContext } from './src/lib/authContext';
-import { getClientStore } from './src/store/clientStore';
 import { syncNow } from './src/lib/sync';
 import { LibraryScreen } from './src/screens/LibraryScreen';
 import { LoginScreen } from './src/screens/LoginScreen';
@@ -17,40 +16,33 @@ const Stack = createNativeStackNavigator<RootStackParamList>();
 
 export default function App() {
   const [authed, setAuthed] = useState<boolean>();
-  const [hasLocalBooks, setHasLocalBooks] = useState<boolean>();
 
   useEffect(() => {
     void loadSession().then((ok) => {
       setAuthed(ok);
       if (ok) void syncNow().catch(() => undefined);
     });
-    // Whether there's anything to read on-device decides the entry screen: books
-    // present → straight to the Library even signed out; empty → Login, since a
-    // fresh device has nothing local and needs a session to fetch the library.
-    void getClientStore()
-      .then((store) => store.listBooks())
-      .then((books) => setHasLocalBooks(books.length > 0))
-      .catch(() => setHasLocalBooks(false));
-    // A dead session no longer ejects to Login — it just flips `authed`, so the
-    // Library keeps serving on-device books and shows a "sign in to sync" hint.
-    // Being locked out of your own downloaded books by an expired token is the
-    // trap we're removing.
+    // A dead session never ejects — it just flips `authed`, so the Library keeps
+    // serving on-device books and shows a "sign in to sync" hint.
     onSessionExpired(() => setAuthed(false));
   }, []);
 
-  const authValue = useMemo(
-    () => ({ authed: authed ?? false, setAuthed }),
-    [authed],
-  );
+  const authValue = useMemo(() => ({ authed: authed ?? false, setAuthed }), [authed]);
 
-  if (authed === undefined || hasLocalBooks === undefined) return null;
+  // Brief splash only until we know the auth state — avoids flashing the
+  // signed-out banner before loadSession resolves.
+  if (authed === undefined) return null;
 
   return (
     <AuthContext.Provider value={authValue}>
       <NavigationContainer>
         <StatusBar style="dark" />
+        {/* Always enter the Library — reading is local-first, so the app is
+            never walled behind a login. Sign-in is an opt-in screen reached
+            from the Library, needed only for server actions (sync, import,
+            downloading a cloud-only book). */}
         <Stack.Navigator
-          initialRouteName={authed || hasLocalBooks ? 'Library' : 'Login'}
+          initialRouteName="Library"
           screenOptions={{
             headerStyle: { backgroundColor: colors.bg },
             headerTintColor: colors.ink,

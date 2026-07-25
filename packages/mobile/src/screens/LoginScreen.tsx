@@ -13,6 +13,7 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../navigation';
 import { login } from '../lib/api';
 import { useAuth } from '../lib/authContext';
+import { performSignIn } from '../lib/loginFlow';
 import { syncNow } from '../lib/sync';
 import { colors } from '../ui/theme';
 
@@ -26,19 +27,24 @@ export function LoginScreen({ navigation }: Props) {
   const [error, setError] = useState<string>();
   const [pending, setPending] = useState(false);
 
-  // Reachable as a modal from the Library (you already have local books) vs.
-  // the first screen on a fresh device — only the former offers "read offline".
+  // Login is always reached from the Library now (never the first screen), so
+  // you can always back out and keep reading.
   const canReadOffline = navigation.canGoBack();
 
   const submit = async () => {
     setPending(true);
     setError(undefined);
     try {
-      await login(email.trim(), password);
-      setAuthed(true);
-      await syncNow(true).catch(() => undefined);
-      if (navigation.canGoBack()) navigation.goBack();
-      else navigation.replace('Library');
+      await performSignIn(email.trim(), password, {
+        login,
+        onAuthed: () => setAuthed(true),
+        // Background — don't make the spinner wait on a full library pull.
+        sync: () => syncNow(true),
+        navigate: () => {
+          if (navigation.canGoBack()) navigation.goBack();
+          else navigation.replace('Library');
+        },
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setPending(false);
