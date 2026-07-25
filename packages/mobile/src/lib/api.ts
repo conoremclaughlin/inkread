@@ -52,14 +52,27 @@ async function persistTokens(access: string, refresh: string): Promise<void> {
 }
 
 export async function login(email: string, password: string): Promise<void> {
-  const response = await fetch(`${API_URL}/api/auth/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password }),
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${API_URL}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+  } catch {
+    // The request never reached the server — wrong network, server down, or a
+    // stale address. Kept distinct from a rejected password so the UI can tell
+    // "can't connect" from "wrong credentials".
+    throw new Error(
+      `Can't reach the server at ${API_URL}. Check you're on the same network and the web server is running.`,
+    );
+  }
+  if (response.status === 401) {
+    throw new Error('Incorrect email or password.');
+  }
   if (!response.ok) {
     const body = (await response.json().catch(() => ({}))) as { error?: string };
-    throw new Error(body.error ?? `Login failed (${response.status})`);
+    throw new Error(body.error ?? `Login failed (${response.status}).`);
   }
   const body = (await response.json()) as { accessToken: string; refreshToken: string };
   await persistTokens(body.accessToken, body.refreshToken);
