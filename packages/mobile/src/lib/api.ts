@@ -1,10 +1,37 @@
+import Constants from 'expo-constants';
 import { getClientStore } from '../store/clientStore';
 
 /**
  * Bearer-token API client for the inkread server. Tokens persist in the
  * client store's meta table; 401s trigger one silent refresh-and-retry.
  */
-export const API_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://127.0.0.1:6021';
+
+/** Port the web API (next dev / next start) listens on — see packages/web. */
+const WEB_API_PORT = 6021;
+
+/**
+ * In a dev build the phone is already connected to Metro, so expo-constants
+ * exposes the dev machine's host (e.g. "192.168.68.115:8081"). The web API runs
+ * on that same machine at :6021, so reuse the host with our port — the app then
+ * auto-follows the Mac's LAN IP every time Metro starts, with no rebuild and no
+ * .env edit. Returns undefined in standalone/TestFlight builds (no Metro host),
+ * where the env override or the localhost fallback applies instead.
+ */
+function metroDerivedApiUrl(): string | undefined {
+  const host = Constants.expoConfig?.hostUri?.split(':')[0]?.trim();
+  return host ? `http://${host}:${WEB_API_PORT}` : undefined;
+}
+
+/**
+ * API base URL, resolved once at startup. Precedence:
+ *   1. EXPO_PUBLIC_API_URL — explicit override, inlined at build time. Set it
+ *      for standalone/TestFlight builds, or to aim a dev build at a remote API.
+ *   2. Metro's host — dev builds auto-follow the machine serving the bundle,
+ *      so a changed LAN IP no longer means a stale hardcoded address.
+ *   3. localhost — last resort (the iOS simulator reaches the Mac this way).
+ */
+export const API_URL =
+  process.env.EXPO_PUBLIC_API_URL?.trim() || metroDerivedApiUrl() || 'http://127.0.0.1:6021';
 
 let accessToken: string | undefined;
 let refreshToken: string | undefined;
