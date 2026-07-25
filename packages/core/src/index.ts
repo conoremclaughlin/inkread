@@ -19,6 +19,7 @@ export {
   type ReaderThemeColors,
   type ReaderSettings,
 } from './reader/html';
+export { paginate, pageOfLine, type LineBox, type Page } from './reader/pagination';
 export { splitSentences, type Sentence } from './tts/sentences';
 export { textToChapters, type TextToChaptersOptions } from './text/segment';
 export { cleanGoogleDocText, googleDocToChapters } from './importers/googleDoc';
