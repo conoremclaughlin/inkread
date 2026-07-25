@@ -303,8 +303,15 @@ ${paragraphsHtml}
     var end = offsetIn(p2, range.endContainer, range.endOffset);
     // Selections spanning paragraphs include the joining '\\n' per paragraph gap.
     var text = range.toString();
+    // Viewport-space bounds of the selection so the host can place its action
+    // bar just below it (falling back to above near the screen edge) instead of
+    // a fixed spot that can cover the text being annotated.
+    var rect = range.getBoundingClientRect();
     if (end > start && text.trim().length > 0) {
-      post({ type: 'selection', start: start, end: end, text: text });
+      post({
+        type: 'selection', start: start, end: end, text: text,
+        top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right,
+      });
     }
   });
 
