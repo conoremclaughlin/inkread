@@ -1,5 +1,6 @@
 import { notFound } from 'next/navigation';
 import { getRepository } from '@/lib/data';
+import { createClient } from '@/lib/supabase/server';
 import { Reader } from '@/components/Reader';
 import { LocalReadFallback } from '@/components/LocalFallback';
 
@@ -19,11 +20,12 @@ export default async function ReadPage({
     const book = await repository.getBook(bookId);
     if (!book) notFound();
 
-    const [chapters, annotations, position, preferences] = await Promise.all([
+    const [chapters, annotations, position, preferences, { data: userData }] = await Promise.all([
       repository.getChapters(bookId),
       repository.listAnnotations(bookId),
       repository.getPosition(bookId),
       repository.getPreferences(),
+      (await createClient()).auth.getUser(),
     ]);
     if (!chapters || chapters.length === 0) notFound();
 
@@ -36,6 +38,7 @@ export default async function ReadPage({
           fromStart ? (position ? { ...position, chapterIndex: 0, offset: 0 } : null) : (position ?? null)
         }
         initialPreferences={preferences}
+        currentUserId={userData.user?.id}
       />
     );
   } catch (error) {
