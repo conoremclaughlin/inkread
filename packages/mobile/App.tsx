@@ -5,6 +5,7 @@ import { StatusBar } from 'expo-status-bar';
 import type { RootStackParamList } from './src/navigation';
 import { loadSession, onSessionExpired } from './src/lib/api';
 import { AuthContext } from './src/lib/authContext';
+import { ErrorBoundary } from './src/components/ErrorBoundary';
 import { syncNow } from './src/lib/sync';
 import { LibraryScreen } from './src/screens/LibraryScreen';
 import { LoginScreen } from './src/screens/LoginScreen';
@@ -34,8 +35,9 @@ export default function App() {
   if (authed === undefined) return null;
 
   return (
-    <AuthContext.Provider value={authValue}>
-      <NavigationContainer>
+    <ErrorBoundary>
+      <AuthContext.Provider value={authValue}>
+        <NavigationContainer>
         <StatusBar style="dark" />
         {/* Always enter the Library — reading is local-first, so the app is
             never walled behind a login. Sign-in is an opt-in screen reached
@@ -75,6 +77,7 @@ export default function App() {
           />
         </Stack.Navigator>
       </NavigationContainer>
-    </AuthContext.Provider>
+      </AuthContext.Provider>
+    </ErrorBoundary>
   );
 }

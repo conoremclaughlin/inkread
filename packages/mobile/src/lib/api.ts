@@ -54,7 +54,7 @@ async function persistTokens(access: string, refresh: string): Promise<void> {
 export async function login(email: string, password: string): Promise<void> {
   let response: Response;
   try {
-    response = await fetch(`${API_URL}/api/auth/login`, {
+    response = await fetchWithTimeout(`${API_URL}/api/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password }),
@@ -101,7 +101,7 @@ async function tryRefresh(): Promise<boolean> {
   if (!refreshToken) return false;
   let response: Response;
   try {
-    response = await fetch(`${API_URL}/api/auth/refresh`, {
+    response = await fetchWithTimeout(`${API_URL}/api/auth/refresh`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ refreshToken }),
@@ -128,9 +128,23 @@ async function tryRefresh(): Promise<boolean> {
   return true;
 }
 
+/**
+ * fetch with a hard timeout so an offline / half-connected request fails fast
+ * instead of hanging. A hung request leaves the reader stuck on its blank
+ * loading view — which reads as a crash (the trap Conor hit tapping a not-yet-
+ * downloaded book offline). The AbortError is a normal network failure to
+ * callers: offline → serve the cache / show a retry.
+ */
+const REQUEST_TIMEOUT_MS = 12_000;
+function fetchWithTimeout(url: string, init: RequestInit = {}): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  return fetch(url, { ...init, signal: controller.signal }).finally(() => clearTimeout(timer));
+}
+
 export async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
   const request = (): Promise<Response> =>
-    fetch(`${API_URL}${path}`, {
+    fetchWithTimeout(`${API_URL}${path}`, {
       ...init,
       headers: {
         ...(init?.headers as Record<string, string> | undefined),
