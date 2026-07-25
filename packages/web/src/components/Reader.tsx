@@ -974,17 +974,11 @@ export function Reader({
             style={panelStyle}
           >
             <p className="mb-2 text-center text-xs italic" style={{ color: mutedColor }}>
-              {extend.range ? `“${rangePreview(extend.range.text)}”` : 'Point or tap where the highlight ends'}
+              {extend.range
+                ? `“${rangePreview(extend.range.text)}”`
+                : 'Click where the highlight ends, then pick a colour'}
             </p>
             <div className="flex items-center justify-center gap-2">
-              <button
-                onClick={() => bridge()?.turnPage(-1)}
-                aria-label="Previous page"
-                className="px-1 text-lg leading-none transition hover:opacity-70"
-                style={{ color: themeColors.accent }}
-              >
-                ‹
-              </button>
               {(Object.keys(HIGHLIGHT_COLORS) as HighlightColor[]).map((color) => (
                 <button
                   key={color}
@@ -994,14 +988,6 @@ export function Reader({
                   style={{ background: `rgb(${HIGHLIGHT_COLORS[color]})` }}
                 />
               ))}
-              <button
-                onClick={() => bridge()?.turnPage(1)}
-                aria-label="Next page"
-                className="px-1 text-lg leading-none transition hover:opacity-70"
-                style={{ color: themeColors.accent }}
-              >
-                ›
-              </button>
               <button
                 onClick={cancelExtend}
                 className="ml-1 rounded-lg px-2 py-1 text-sm font-semibold transition hover:opacity-70"
