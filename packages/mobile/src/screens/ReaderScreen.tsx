@@ -1121,7 +1121,21 @@ function ReaderInner({
           <View style={[styles.grip, { backgroundColor: panel.border }]} />
         </View>
         <Text style={[styles.sheetTitle, dyn.fgText]}>Voice</Text>
-        {voices.every((v) => v.quality === 'default') ? (
+        {voices.length === 0 ? (
+          // Distinct from the all-default case below — `[].every()` is true, so
+          // without this an empty list would wrongly show the "add richer voices"
+          // banner and no voices at all (the "voices aren't there" report).
+          <Pressable
+            style={[styles.voiceBanner, { borderColor: panel.border }]}
+            onPress={() => void Linking.openSettings()}
+          >
+            <Text style={[styles.voiceBannerText, dyn.mutedText]}>
+              No voices detected yet. Tap Listen once to wake the speech engine, then reopen — or add
+              voices in Settings › Accessibility › Spoken Content › Voices.
+            </Text>
+            <Text style={[styles.voiceBannerAction, dyn.accentText]}>Open Settings ›</Text>
+          </Pressable>
+        ) : voices.every((v) => v.quality === 'default') ? (
           <Pressable
             style={[styles.voiceBanner, { borderColor: panel.border }]}
             onPress={() => void Linking.openSettings()}

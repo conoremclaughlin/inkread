@@ -22,9 +22,28 @@ function classify(voice: Speech.Voice): VoiceQuality {
   return 'default';
 }
 
+/**
+ * Enumerate the OS voices, defensively. iOS sometimes returns [] on the very
+ * first call — before AVSpeechSynthesizer has finished enumerating its catalog —
+ * so a single retry after a beat usually populates it. Never throws; a failure
+ * yields an empty list the UI treats as "no voices detected".
+ */
+async function getVoices(): Promise<Speech.Voice[]> {
+  try {
+    let voices = await Speech.getAvailableVoicesAsync();
+    if (voices.length === 0) {
+      await new Promise((resolve) => setTimeout(resolve, 350));
+      voices = await Speech.getAvailableVoicesAsync();
+    }
+    return voices;
+  } catch {
+    return [];
+  }
+}
+
 /** Available voices for a language, best quality first, de-duplicated. */
 export async function listVoices(language = 'en'): Promise<VoiceOption[]> {
-  const voices = await Speech.getAvailableVoicesAsync();
+  const voices = await getVoices();
   const lang = language.toLowerCase().slice(0, 2);
   const forLang = voices.filter((v) => v.language?.toLowerCase().startsWith(lang));
   const pool = forLang.length > 0 ? forLang : voices;
