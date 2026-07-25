@@ -32,10 +32,22 @@ import {
   createAnnotation,
   deleteAnnotation,
   flushOutbox,
+  loadBook,
+  persistPosition,
   refreshAnnotations,
   updateAnnotationColor,
   updateAnnotationNote,
 } from './libraryData';
+
+const BOOK = {
+  id: 'b1',
+  title: 'Cached Book',
+  language: 'en',
+  source: 'text' as const,
+  chapterCount: 1,
+  createdAt: '2026-07-20T00:00:00Z',
+  updatedAt: '2026-07-20T00:00:00Z',
+};
 
 function driver() {
   const db = new Database(':memory:');
@@ -195,5 +207,27 @@ describe('libraryData offline-first annotations', () => {
 
     const list = await refreshAnnotations('b1'); // server fetch fails -> local fallback
     expect(list.map((a) => a.id)).toEqual([annotation.id]);
+  });
+
+  it('persistPosition saves the reading position locally even offline', async () => {
+    // The reading spot must never be lost to a dropped network — it's written to
+    // the cache first, then pushed best-effort.
+    await persistPosition({ bookId: 'b1', chapterIndex: 2, offset: 400 });
+    const pos = await h.store.getPosition('b1');
+    expect(pos?.chapterIndex).toBe(2);
+    expect(pos?.offset).toBe(400);
+    // A best-effort PUT is attempted, and its offline rejection is swallowed.
+    expect(h.calls.some((c) => c.init?.method === 'PUT')).toBe(true);
+  });
+
+  it('loadBook serves cached chapters offline without hitting the server', async () => {
+    await h.store.upsertBooks([BOOK]);
+    await h.store.replaceChapters('b1', [{ title: 'One', paragraphs: ['Read me offline.'] }]);
+    h.calls = [];
+
+    const loaded = await loadBook('b1');
+    expect(loaded?.chapters[0]?.paragraphs).toEqual(['Read me offline.']);
+    // Content was already local, so no recovery fetch was needed.
+    expect(h.calls).toHaveLength(0);
   });
 });
