@@ -25,20 +25,40 @@ export async function loadPreferences(): Promise<ReaderPreferences> {
     try {
       prefs = JSON.parse(cached) as ReaderPreferences;
     } catch {
-      // Corrupt cache — fall through to the server copy.
+      // Corrupt cache — a background refresh will repopulate it.
     }
   }
-  try {
-    const response = await apiFetch('/api/preferences');
-    if (response.ok) {
-      const { preferences } = (await response.json()) as { preferences: ReaderPreferences };
-      prefs = { ...prefs, ...preferences };
-      await store.setMeta(META_KEY, JSON.stringify(prefs));
-    }
-  } catch {
-    // Offline — the cached copy stands.
-  }
+  // Refresh from the server in the BACKGROUND — opening a book must never wait
+  // on the network. A reachable-but-unresponsive server (internet up, API host
+  // dead) makes fetch hang for the full request timeout, so awaiting it here
+  // stalled the reader; true airplane mode fails fast, which is why it "just
+  // worked" and a black-holed server didn't. The cached copy stands until the
+  // refresh lands (next open).
+  void refreshPreferences();
   return prefs;
+}
+
+/** Best-effort server refresh of the cached preferences. Never throws. */
+async function refreshPreferences(): Promise<void> {
+  let response: Response;
+  try {
+    response = await apiFetch('/api/preferences');
+  } catch {
+    return; // offline / server unreachable — the cached copy stands
+  }
+  if (!response.ok) return;
+  const { preferences } = (await response.json()) as { preferences: ReaderPreferences };
+  const store = await getClientStore();
+  const cached = await store.getMeta(META_KEY);
+  let prefs: ReaderPreferences = {};
+  if (cached) {
+    try {
+      prefs = JSON.parse(cached) as ReaderPreferences;
+    } catch {
+      prefs = {};
+    }
+  }
+  await store.setMeta(META_KEY, JSON.stringify({ ...prefs, ...preferences }));
 }
 
 /** Merge a patch into the cache immediately; server write is best-effort. */
