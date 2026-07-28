@@ -6,6 +6,8 @@ import type { RootStackParamList } from './src/navigation';
 import { loadSession, onSessionExpired } from './src/lib/api';
 import { AuthContext } from './src/lib/authContext';
 import { ErrorBoundary } from './src/components/ErrorBoundary';
+import { ErrorScreen } from './src/components/ErrorScreen';
+import { installGlobalErrorHandler, type RecordedError } from './src/lib/errorLog';
 import { syncNow } from './src/lib/sync';
 import { LibraryScreen } from './src/screens/LibraryScreen';
 import { LoginScreen } from './src/screens/LoginScreen';
@@ -17,8 +19,12 @@ const Stack = createNativeStackNavigator<RootStackParamList>();
 
 export default function App() {
   const [authed, setAuthed] = useState<boolean>();
+  const [fatal, setFatal] = useState<RecordedError>();
 
   useEffect(() => {
+    // Uncaught/async errors don't reach the ErrorBoundary; surface them here so
+    // a release build shows the stack (to screenshot) instead of a blank page.
+    installGlobalErrorHandler(setFatal);
     void loadSession().then((ok) => {
       setAuthed(ok);
       if (ok) void syncNow().catch(() => undefined);
@@ -29,6 +35,17 @@ export default function App() {
   }, []);
 
   const authValue = useMemo(() => ({ authed: authed ?? false, setAuthed }), [authed]);
+
+  if (fatal) {
+    return (
+      <ErrorScreen
+        context={fatal.context}
+        message={fatal.message}
+        stack={fatal.stack}
+        onReset={() => setFatal(undefined)}
+      />
+    );
+  }
 
   // Brief splash only until we know the auth state — avoids flashing the
   // signed-out banner before loadSession resolves.

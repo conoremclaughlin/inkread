@@ -202,6 +202,7 @@ export function Reader({
   }, [fixedTheme, themeMode, lightChoice, darkChoice, fontSize, pagination, rate, voice]);
 
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const activeTocRef = useRef<HTMLButtonElement>(null);
   const offsetRef = useRef(initialPosition?.offset ?? 0);
   const [furthest, setFurthest] = useState(initialPosition?.furthest);
   const ttsRef = useRef<TtsPlayer | null>(null);
@@ -663,6 +664,9 @@ export function Reader({
     '--panel-border': `color-mix(in srgb, ${themeColors.fg} 16%, transparent)`,
     '--panel-accent': themeColors.accent,
     '--panel-accent-soft': `color-mix(in srgb, ${themeColors.accent} 18%, transparent)`,
+    // A theme-derived hover/active tint — replaces a hardcoded cream that was
+    // invisible/wrong on dark themes (night/midnight).
+    '--panel-hover': `color-mix(in srgb, ${themeColors.fg} 9%, transparent)`,
   };
   // Chrome controls sit quietly on the page color until hovered — the whole
   // window reads as one book page.
@@ -675,6 +679,12 @@ export function Reader({
     setTypeOpen(false);
   };
   const anyMenuOpen = tocOpen || themeOpen || layoutOpen || typeOpen;
+
+  // Open the Chapters list already scrolled to the current chapter, instead of
+  // from the top — for long books that's a lot of scrolling to find your place.
+  useEffect(() => {
+    if (tocOpen) activeTocRef.current?.scrollIntoView({ block: 'center' });
+  }, [tocOpen]);
 
   return (
     <div
@@ -776,22 +786,26 @@ export function Reader({
             {furthest && chapterIndex < furthest.chapterIndex ? (
               <button
                 onClick={goToFurthest}
-                className="mb-1 block w-full truncate rounded-lg px-3 py-2 text-left text-sm font-semibold text-[var(--panel-accent)] hover:bg-[#faf7f2]"
+                className="mb-1 block w-full truncate rounded-lg px-3 py-2 text-left text-sm font-semibold text-[var(--panel-accent)] hover:bg-[var(--panel-hover)]"
               >
                 ↩ Go to where I left off
               </button>
             ) : null}
-            {chapters.map((c, i) => (
-              <button
-                key={i}
-                onClick={() => goToChapter(i)}
-                className={`block w-full truncate rounded-lg px-3 py-2 text-left text-sm hover:bg-[#faf7f2] ${
-                  i === chapterIndex ? 'font-bold text-[var(--panel-accent)]' : ''
-                }`}
-              >
-                {c.title}
-              </button>
-            ))}
+            {chapters.map((c, i) => {
+              const current = i === chapterIndex;
+              return (
+                <button
+                  key={i}
+                  ref={current ? activeTocRef : undefined}
+                  onClick={() => goToChapter(i)}
+                  className={`block w-full truncate rounded-lg px-3 py-2 text-left text-sm hover:bg-[var(--panel-hover)] ${
+                    current ? 'bg-[var(--panel-hover)] font-bold text-[var(--panel-accent)]' : ''
+                  }`}
+                >
+                  {c.title}
+                </button>
+              );
+            })}
           </nav>
         ) : null}
 
