@@ -6,6 +6,7 @@ import {
   Easing,
   FlatList,
   Linking,
+  Platform,
   Pressable,
   Share,
   StyleSheet,
@@ -49,6 +50,7 @@ import { resolveVoice, listVoices, QUALITY_LABEL, type VoiceOption } from '../tt
 import { ensureListeningAudioSession } from '../lib/audio';
 import { resetClientStore } from '../store/clientStore';
 import { BottomSheet } from '../components/BottomSheet';
+import { NativeReaderView } from '../components/NativeReaderView';
 import { colors } from '../ui/theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -290,6 +292,11 @@ function ReaderInner({
   const [fontSize, setFontSize] = useState(preferences.fontSize ?? DEFAULT_FONT_SIZE);
   const [pagination, setPagination] = useState<'scroll' | 'paged'>(
     preferences.pagination ?? 'scroll',
+  );
+  // Experimental pure-RN reader (iOS-only). Off by default; the WebView reader
+  // stays the mature path until the native one reaches parity.
+  const [readerEngine, setReaderEngine] = useState<'webview' | 'native'>(
+    preferences.readerEngine === 'native' && Platform.OS === 'ios' ? 'native' : 'webview',
   );
   const [annotations, setAnnotations] = useState<Annotation[]>(loaded.annotations);
   const [selection, setSelection] = useState<Selection | undefined>();
@@ -851,14 +858,31 @@ function ReaderInner({
       <View
         style={{ flex: 1, paddingTop: insets.top, paddingBottom: ttsVisible ? ttsBarHeight : 0 }}
       >
-        <WebView
-          ref={webviewRef}
-          source={{ html }}
-          originWhitelist={['*']}
-          onMessage={handleMessage}
-          menuItems={[]}
-          style={styles.webview}
-        />
+        {readerEngine === 'native' ? (
+          // Pure-RN reader (native selection → offsets). Scroll mode; the WebView
+          // still owns paged mode, cross-page extend, and TTS sentence marks.
+          <NativeReaderView
+            paragraphs={chapter.paragraphs}
+            title={chapter.title}
+            annotations={chapterAnnotations}
+            fontSize={fontSize}
+            lineHeight={Math.round(fontSize * 1.55)}
+            color={panel.fg}
+            background={panel.bg}
+            highlightAlpha={Number(READER_THEMES[theme]?.hlAlpha ?? READER_THEMES.paper.hlAlpha)}
+            onSelection={(sel) => setSelection(sel)}
+            onTapHighlight={handleTapHighlight}
+          />
+        ) : (
+          <WebView
+            ref={webviewRef}
+            source={{ html }}
+            originWhitelist={['*']}
+            onMessage={handleMessage}
+            menuItems={[]}
+            style={styles.webview}
+          />
+        )}
       </View>
 
       {/* Top bar: close (X) on the left, actions on the right. Fades with chrome. */}
@@ -976,9 +1000,13 @@ function ReaderInner({
           <Pressable hitSlop={8} onPress={promptNote}>
             <Text style={[styles.selectionAction, dyn.accentText]}>Note</Text>
           </Pressable>
-          <Pressable hitSlop={8} onPress={startExtend}>
-            <Text style={[styles.selectionAction, dyn.accentText]}>Extend</Text>
-          </Pressable>
+          {/* Extend rides the WebView bridge (anchor → flip pages → tap end); the
+              native reader gets tap-to-tap extend in a later phase. */}
+          {readerEngine === 'webview' ? (
+            <Pressable hitSlop={8} onPress={startExtend}>
+              <Text style={[styles.selectionAction, dyn.accentText]}>Extend</Text>
+            </Pressable>
+          ) : null}
         </View>
       ) : null}
 
@@ -1130,6 +1158,37 @@ function ReaderInner({
             ))}
           </View>
         </View>
+
+        {Platform.OS === 'ios' ? (
+          <View style={[styles.settingsRow, dyn.border]}>
+            <Text style={[styles.settingsLabel, dyn.fgText]}>Reader · beta</Text>
+            <View style={[styles.segment, { backgroundColor: withAlpha(panel.fg, 0.08) }]}>
+              {(['webview', 'native'] as const).map((engine) => (
+                <Pressable
+                  key={engine}
+                  style={[
+                    styles.segmentItem,
+                    readerEngine === engine && {
+                      backgroundColor: panel.bg,
+                      borderColor: panel.border,
+                      borderWidth: StyleSheet.hairlineWidth,
+                    },
+                  ]}
+                  onPress={() => {
+                    setReaderEngine(engine);
+                    void savePreferences({ readerEngine: engine });
+                  }}
+                >
+                  <Text
+                    style={[styles.segmentText, readerEngine === engine ? dyn.fgText : dyn.mutedText]}
+                  >
+                    {engine === 'webview' ? 'Classic' : 'Native'}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          </View>
+        ) : null}
 
         <Pressable style={[styles.settingsRow, dyn.border]} onPress={openVoiceSheet}>
           <Text style={[styles.settingsLabel, dyn.fgText]}>Voice</Text>

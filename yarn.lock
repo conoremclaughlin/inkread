@@ -784,6 +784,16 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@bsky.app/react-native-uitextview@npm:^2.5.0":
+  version: 2.5.0
+  resolution: "@bsky.app/react-native-uitextview@npm:2.5.0"
+  peerDependencies:
+    react: "*"
+    react-native: ">=0.81.5"
+  checksum: 10/017f2f2f240d02a3d02946f837b1685862ac43d16c3115b594d4c1c8b116d8c9a2de048efdf8e31a33e605c9290abd16973c025925475c9bb83d076c8a589b8c
+  languageName: node
+  linkType: hard
+
 "@electron/get@npm:^2.0.0":
   version: 2.0.3
   resolution: "@electron/get@npm:2.0.3"
@@ -1990,6 +2000,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@inkread/mobile@workspace:packages/mobile"
   dependencies:
+    "@bsky.app/react-native-uitextview": "npm:^2.5.0"
     "@inkread/client-store": "workspace:*"
     "@inkread/core": "workspace:*"
     "@react-navigation/native": "npm:^7.3.5"
