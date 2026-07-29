@@ -310,6 +310,9 @@ function ReaderInner({
   const [ttsVoiceId, setTtsVoiceId] = useState<string | undefined>(preferences.ttsVoice);
   const [voiceSheetVisible, setVoiceSheetVisible] = useState(false);
   const [voices, setVoices] = useState<VoiceOption[]>([]);
+  // Measured height of the persistent Listen transport, so the reader can reserve
+  // that space (rather than let the bar overlap the last lines of the chapter).
+  const [ttsBarHeight, setTtsBarHeight] = useState(0);
 
   const webviewRef = useRef<WebView>(null);
   const restoreOffsetRef = useRef(initialPosition?.offset ?? 0);
@@ -842,7 +845,12 @@ function ReaderInner({
   return (
     <View style={[styles.screen, { backgroundColor: panel.bg }]}>
       <StatusBar style={panel.dark ? 'light' : 'dark'} />
-      <View style={{ flex: 1, paddingTop: insets.top }}>
+      {/* Reserve room for the Listen transport so it lifts the text off the
+          bottom instead of covering the final lines. The chapter-nav bar stays
+          an overlay — it's transient chrome that fades, not a persistent panel. */}
+      <View
+        style={{ flex: 1, paddingTop: insets.top, paddingBottom: ttsVisible ? ttsBarHeight : 0 }}
+      >
         <WebView
           ref={webviewRef}
           source={{ html }}
@@ -886,7 +894,10 @@ function ReaderInner({
           otherwise → chapter nav that fades with the chrome. Both carry the
           tiny, muted page/chapter line (Books-style). */}
       {ttsVisible ? (
-        <View style={[styles.bottomBar, dyn.bar, dyn.bottomPad]}>
+        <View
+          style={[styles.bottomBar, dyn.bar, dyn.bottomPad]}
+          onLayout={(e) => setTtsBarHeight(e.nativeEvent.layout.height)}
+        >
           <Text style={[styles.bottomInfo, dyn.faintText]} numberOfLines={1}>
             {chapter.title} · {chapterIndex + 1} / {chapters.length}
           </Text>
@@ -935,7 +946,14 @@ function ReaderInner({
 
       {furthest && chapterIndex < furthest.chapterIndex ? (
         <Pressable
-          style={[styles.resumeChip, dyn.pill]}
+          style={[
+            styles.resumeChip,
+            dyn.pill,
+            // Float just above the bottom bar (whose height already includes the
+            // safe-area inset when listening). Previously the chip had no vertical
+            // anchor, so it defaulted to top:0 — jammed under the status bar.
+            { bottom: ttsVisible ? ttsBarHeight + 12 : 76 + insets.bottom },
+          ]}
           onPress={() => goToChapter(furthest.chapterIndex, furthest.offset)}
         >
           <Text style={[styles.resumeChipText, dyn.accentText]} numberOfLines={1}>
@@ -972,9 +990,16 @@ function ReaderInner({
           pointerEvents="box-none"
         >
           <Text style={[styles.extendHint, dyn.pill, dyn.mutedText]}>
-            Tap where the highlight ends, then pick a colour
+            {pagination === 'paged'
+              ? 'Tap the last word · use ‹ › to change pages · then pick a colour'
+              : 'Scroll to the last word, then pick a colour'}
           </Text>
           <View style={[styles.extendBar, dyn.pill]}>
+            {pagination === 'paged' ? (
+              <Pressable hitSlop={10} onPress={() => turnOrGo(-1)}>
+                <Text style={[styles.extendPage, dyn.accentText]}>‹</Text>
+              </Pressable>
+            ) : null}
             {(Object.keys(HIGHLIGHT_COLORS) as HighlightColor[]).map((color) => (
               <Pressable
                 key={color}
@@ -982,6 +1007,11 @@ function ReaderInner({
                 onPress={() => confirmExtend(color)}
               />
             ))}
+            {pagination === 'paged' ? (
+              <Pressable hitSlop={10} onPress={() => turnOrGo(1)}>
+                <Text style={[styles.extendPage, dyn.accentText]}>›</Text>
+              </Pressable>
+            ) : null}
             <Pressable hitSlop={8} onPress={cancelExtend}>
               <Text style={[styles.selectionAction, dyn.accentText]}>Cancel</Text>
             </Pressable>
@@ -1247,6 +1277,7 @@ const styles = StyleSheet.create({
   },
   colorDot: { width: 22, height: 22, borderRadius: 11 },
   selectionAction: { color: colors.accent, fontWeight: '700' },
+  extendPage: { fontSize: 24, fontWeight: '700', lineHeight: 24, paddingHorizontal: 2 },
   extendWrap: { position: 'absolute', left: 0, right: 0, alignItems: 'center', gap: 8 },
   extendHint: {
     fontSize: 12,

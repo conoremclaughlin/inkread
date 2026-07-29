@@ -80,6 +80,22 @@ describe('buildReaderHtml', () => {
     expect(html).toContain('beginExtend: function');
     expect(html).toContain('endExtend: function');
     expect(html).toContain("post({ type: 'extendPoint'");
+    // Page turns are driven by the host (turnPage), not by overloaded edge taps.
+    expect(html).toContain('turnPage: function');
+  });
+
+  it('does not overload edge taps to turn pages during extend', () => {
+    // Regression: while extending, a tap near the margin used to flip the page
+    // instead of marking the highlight end, so extending across pages felt
+    // broken. Every tap now sets the end point; the host owns page turns.
+    const html = buildReaderHtml(CHAPTER, [], { theme: 'light', fontSize: 18 });
+    // Slice just the `if (extending) { … return; }` body (up to its own return),
+    // so the assertion isn't fooled by the separate non-extend edge-tap block.
+    const start = html.indexOf('if (extending) {');
+    const extendBlock = html.slice(start, html.indexOf('return;', start));
+    expect(extendBlock).toContain("Every tap sets the highlight's end point");
+    expect(extendBlock).not.toContain('turnPage(-1)');
+    expect(extendBlock).not.toContain('turnPage(1)');
   });
 
   it('themes the page background per setting', () => {
