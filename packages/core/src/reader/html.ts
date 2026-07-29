@@ -403,12 +403,11 @@ ${paragraphsHtml}
     var sel = window.getSelection();
     if (sel && !sel.isCollapsed) return;
     if (extending) {
-      // Edge taps still turn pages so you can navigate to the end point.
-      if (PAGED) {
-        var ex = event.clientX / window.innerWidth;
-        if (ex < 0.18) { turnPage(-1); return; }
-        if (ex > 0.82) { turnPage(1); return; }
-      }
+      // Every tap sets the highlight's end point. Page turns during extend go
+      // through the host's explicit page controls (which call __reader.turnPage)
+      // — overloading edge taps to *also* turn pages meant a tap near the margin
+      // silently flipped the page instead of marking the end, so extending while
+      // moving between pages felt broken.
       var eoff = pointToOffset(event.clientX, event.clientY);
       if (eoff != null && eoff !== anchorOffset) {
         var lo = Math.min(anchorOffset, eoff), hi = Math.max(anchorOffset, eoff);
