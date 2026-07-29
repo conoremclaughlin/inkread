@@ -21,6 +21,12 @@ export {
 } from './reader/html';
 export { paginate, pageOfLine, type LineBox, type Page } from './reader/pagination';
 export {
+  segmentParagraph,
+  segmentChapterRuns,
+  type Run,
+  type ParagraphRuns,
+} from './reader/runs';
+export {
   castChapter,
   attributeSentences,
   toggleSentenceSpeaker,

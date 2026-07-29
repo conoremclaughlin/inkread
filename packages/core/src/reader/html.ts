@@ -1,4 +1,5 @@
 import type { Annotation, Chapter } from '../models/types';
+import { segmentChapterRuns } from './runs';
 
 /**
  * Chapter → self-contained reader HTML.
@@ -105,48 +106,15 @@ function escapeHtml(text: string): string {
     .replace(/"/g, '&quot;');
 }
 
-interface Segment {
-  text: string;
-  annotation?: Annotation;
-}
-
-/** Split one paragraph's text into plain/highlighted segments. */
-function segmentParagraph(
-  text: string,
-  paragraphStart: number,
-  annotations: Annotation[],
-): Segment[] {
-  const paragraphEnd = paragraphStart + text.length;
-  const overlapping = annotations
-    .filter((a) => a.locator.start < paragraphEnd && a.locator.end > paragraphStart)
-    .sort((a, b) => a.locator.start - b.locator.start);
-  if (overlapping.length === 0) return [{ text }];
-
-  const segments: Segment[] = [];
-  let cursor = 0;
-  for (const annotation of overlapping) {
-    const start = Math.max(0, annotation.locator.start - paragraphStart);
-    const end = Math.min(text.length, annotation.locator.end - paragraphStart);
-    if (start > cursor) segments.push({ text: text.slice(cursor, start) });
-    if (end > Math.max(start, cursor)) {
-      segments.push({ text: text.slice(Math.max(start, cursor), end), annotation });
-      cursor = end;
-    }
-  }
-  if (cursor < text.length) segments.push({ text: text.slice(cursor) });
-  return segments;
-}
-
 export function buildReaderHtml(
   chapter: Chapter,
   annotations: Annotation[],
   settings: ReaderSettings,
 ): string {
   const theme = THEMES[settings.theme];
-  let offset = 0;
-  const paragraphsHtml = chapter.paragraphs
-    .map((text) => {
-      const segments = segmentParagraph(text, offset, annotations)
+  const paragraphsHtml = segmentChapterRuns(chapter.paragraphs, annotations)
+    .map(({ start, runs }) => {
+      const segments = runs
         .map((seg) => {
           if (!seg.annotation) return escapeHtml(seg.text);
           const rgb = highlightRgb(seg.annotation.color, settings.theme);
@@ -154,9 +122,7 @@ export function buildReaderHtml(
           return `<span class="hl${noteBadge}" data-hl="${seg.annotation.id}" style="background: rgba(${rgb}, ${theme.hlAlpha})">${escapeHtml(seg.text)}</span>`;
         })
         .join('');
-      const html = `<p data-po="${offset}">${segments}</p>`;
-      offset += text.length + 1;
-      return html;
+      return `<p data-po="${start}">${segments}</p>`;
     })
     .join('\n');
 
