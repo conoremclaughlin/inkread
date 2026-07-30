@@ -51,6 +51,7 @@ import { ensureListeningAudioSession } from '../lib/audio';
 import { resetClientStore } from '../store/clientStore';
 import { BottomSheet } from '../components/BottomSheet';
 import { NativeReaderView } from '../components/NativeReaderView';
+import { NativePagedView } from '../components/NativePagedView';
 import { colors } from '../ui/theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -865,24 +866,43 @@ function ReaderInner({
         style={{ flex: 1, paddingTop: insets.top, paddingBottom: ttsVisible ? ttsBarHeight : 0 }}
       >
         {readerEngine === 'native' ? (
-          // Pure-RN reader (native selection → offsets). Scroll mode; the WebView
-          // still owns paged mode, cross-page extend, and TTS sentence marks.
-          <NativeReaderView
-            key={chapterIndex}
-            paragraphs={chapter.paragraphs}
-            title={chapter.title}
-            annotations={chapterAnnotations}
-            fontSize={fontSize}
-            lineHeight={Math.round(fontSize * 1.55)}
-            color={panel.fg}
-            background={panel.bg}
-            highlightAlpha={Number(READER_THEMES[theme]?.hlAlpha ?? READER_THEMES.paper.hlAlpha)}
-            initialOffset={restoreOffsetRef.current}
-            onSelection={(sel) => setSelection(sel)}
-            onTapHighlight={handleTapHighlight}
-            onOffsetChange={recordOffset}
-            onChromeVisibility={setChromeVisible}
-          />
+          // Pure-RN reader (native selection → offsets). The WebView still owns
+          // cross-page extend and TTS sentence marks.
+          pagination === 'paged' ? (
+            <NativePagedView
+              key={chapterIndex}
+              paragraphs={chapter.paragraphs}
+              title={chapter.title}
+              annotations={chapterAnnotations}
+              fontSize={fontSize}
+              lineHeight={Math.round(fontSize * 1.55)}
+              color={panel.fg}
+              background={panel.bg}
+              highlightAlpha={Number(READER_THEMES[theme]?.hlAlpha ?? READER_THEMES.paper.hlAlpha)}
+              onSelection={(sel) => setSelection(sel)}
+              onTapHighlight={handleTapHighlight}
+              onReachStart={() => goToChapter(chapterIndex - 1, Number.MAX_SAFE_INTEGER)}
+              onReachEnd={() => goToChapter(chapterIndex + 1)}
+              onChromeVisibility={setChromeVisible}
+            />
+          ) : (
+            <NativeReaderView
+              key={chapterIndex}
+              paragraphs={chapter.paragraphs}
+              title={chapter.title}
+              annotations={chapterAnnotations}
+              fontSize={fontSize}
+              lineHeight={Math.round(fontSize * 1.55)}
+              color={panel.fg}
+              background={panel.bg}
+              highlightAlpha={Number(READER_THEMES[theme]?.hlAlpha ?? READER_THEMES.paper.hlAlpha)}
+              initialOffset={restoreOffsetRef.current}
+              onSelection={(sel) => setSelection(sel)}
+              onTapHighlight={handleTapHighlight}
+              onOffsetChange={recordOffset}
+              onChromeVisibility={setChromeVisible}
+            />
+          )
         ) : (
           <WebView
             ref={webviewRef}
