@@ -4,6 +4,7 @@
   "main": "index.ts",
   "private": true,
   "dependencies": {
+    "@bsky.app/react-native-uitextview": "^2.5.0",
     "@inkread/client-store": "workspace:*",
     "@inkread/core": "workspace:*",
     "@react-navigation/native": "^7.3.5",
