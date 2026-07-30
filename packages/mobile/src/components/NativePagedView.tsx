@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 import { UITextView } from '@bsky.app/react-native-uitextview';
 import { HIGHLIGHT_COLORS, segmentChapterRuns, type Annotation } from '@inkread/core';
+import { modelOffsetForRendered, renderedParagraphStarts } from '../lib/pagedOffsets';
 
 /**
  * Native paged reader. Rather than clip + translate a selectable view (which can
@@ -72,6 +73,14 @@ export function NativePagedView({
     () => segmentChapterRuns(paragraphs, annotations),
     [paragraphs, annotations],
   );
+  // We render a blank line ('\n\n') between paragraphs for readable spacing,
+  // while the offset model uses a single '\n'. Each paragraph p therefore starts
+  // p chars later in the rendered text, so a rendered offset maps to the model
+  // by subtracting the index of the paragraph it falls in (`r - p`).
+  const renderedStarts = useMemo(
+    () => renderedParagraphStarts(paras.map((p) => p.start)),
+    [paras],
+  );
 
   const scrollRef = useRef<ScrollView>(null);
   const [viewportH, setViewportH] = useState(0);
@@ -107,13 +116,15 @@ export function NativePagedView({
       }
       return;
     }
-    const text = body.slice(start, end);
+    const from = modelOffsetForRendered(renderedStarts, start);
+    const to = modelOffsetForRendered(renderedStarts, end);
+    const text = body.slice(from, to);
     if (text.trim().length === 0) {
       onSelection(undefined);
       return;
     }
     activeRef.current = true;
-    onSelection({ start, end, text });
+    onSelection({ start: from, end: to, text });
   };
 
   return (
@@ -146,7 +157,7 @@ export function NativePagedView({
               ),
             );
             return pIndex < paras.length - 1
-              ? [...nodes, <UITextView key={`nl:${pIndex}`}>{'\n'}</UITextView>]
+              ? [...nodes, <UITextView key={`nl:${pIndex}`}>{'\n\n'}</UITextView>]
               : nodes;
           })}
         </UITextView>
