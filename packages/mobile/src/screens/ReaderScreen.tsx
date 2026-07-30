@@ -668,6 +668,27 @@ function ReaderInner({
     });
   }, [addHighlight, selection]);
 
+  // Native reader selection. In extend mode a *second* native selection marks
+  // the far end of the highlight, so the range spans from the anchor to it —
+  // the native answer to the WebView's tap-the-end-word flow, no offset probing.
+  // Otherwise the selection just drives the action bar.
+  const handleNativeSelection = useCallback(
+    (sel: { start: number; end: number; text: string } | undefined) => {
+      if (extend && sel) {
+        setExtend((prev) => {
+          if (!prev) return prev;
+          const anchorEnd = prev.anchor + prev.anchorText.length;
+          const start = Math.min(prev.anchor, sel.start);
+          const end = Math.max(anchorEnd, sel.end);
+          return { ...prev, range: { start, end, text: chapterText.slice(start, end) } };
+        });
+      } else {
+        setSelection(sel);
+      }
+    },
+    [extend, chapterText],
+  );
+
   const sharePassage = useCallback(
     (passage: string, note?: string) => {
       if (!book) return;
@@ -879,7 +900,7 @@ function ReaderInner({
               color={panel.fg}
               background={panel.bg}
               highlightAlpha={Number(READER_THEMES[theme]?.hlAlpha ?? READER_THEMES.paper.hlAlpha)}
-              onSelection={(sel) => setSelection(sel)}
+              onSelection={handleNativeSelection}
               onTapHighlight={handleTapHighlight}
               onReachStart={() => goToChapter(chapterIndex - 1, Number.MAX_SAFE_INTEGER)}
               onReachEnd={() => goToChapter(chapterIndex + 1)}
@@ -897,7 +918,7 @@ function ReaderInner({
               background={panel.bg}
               highlightAlpha={Number(READER_THEMES[theme]?.hlAlpha ?? READER_THEMES.paper.hlAlpha)}
               initialOffset={restoreOffsetRef.current}
-              onSelection={(sel) => setSelection(sel)}
+              onSelection={handleNativeSelection}
               onTapHighlight={handleTapHighlight}
               onOffsetChange={recordOffset}
               onChromeVisibility={setChromeVisible}
@@ -1030,13 +1051,11 @@ function ReaderInner({
           <Pressable hitSlop={8} onPress={promptNote}>
             <Text style={[styles.selectionAction, dyn.accentText]}>Note</Text>
           </Pressable>
-          {/* Extend rides the WebView bridge (anchor → flip pages → tap end); the
-              native reader gets tap-to-tap extend in a later phase. */}
-          {readerEngine === 'webview' ? (
-            <Pressable hitSlop={8} onPress={startExtend}>
-              <Text style={[styles.selectionAction, dyn.accentText]}>Extend</Text>
-            </Pressable>
-          ) : null}
+          {/* Extend: WebView flows anchor → flip pages → tap end; native flows
+              anchor → select the far end (handleNativeSelection folds it in). */}
+          <Pressable hitSlop={8} onPress={startExtend}>
+            <Text style={[styles.selectionAction, dyn.accentText]}>Extend</Text>
+          </Pressable>
         </View>
       ) : null}
 
@@ -1048,12 +1067,14 @@ function ReaderInner({
           pointerEvents="box-none"
         >
           <Text style={[styles.extendHint, dyn.pill, dyn.mutedText]}>
-            {pagination === 'paged'
-              ? 'Tap the last word · use ‹ › to change pages · then pick a colour'
-              : 'Scroll to the last word, then pick a colour'}
+            {readerEngine === 'native'
+              ? 'Select where the highlight ends, then pick a colour'
+              : pagination === 'paged'
+                ? 'Tap the last word · use ‹ › to change pages · then pick a colour'
+                : 'Scroll to the last word, then pick a colour'}
           </Text>
           <View style={[styles.extendBar, dyn.pill]}>
-            {pagination === 'paged' ? (
+            {pagedNav ? (
               <Pressable hitSlop={10} onPress={() => turnOrGo(-1)}>
                 <Text style={[styles.extendPage, dyn.accentText]}>‹</Text>
               </Pressable>
@@ -1065,7 +1086,7 @@ function ReaderInner({
                 onPress={() => confirmExtend(color)}
               />
             ))}
-            {pagination === 'paged' ? (
+            {pagedNav ? (
               <Pressable hitSlop={10} onPress={() => turnOrGo(1)}>
                 <Text style={[styles.extendPage, dyn.accentText]}>›</Text>
               </Pressable>
