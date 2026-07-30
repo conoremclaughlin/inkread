@@ -742,6 +742,25 @@ function ReaderInner({
     [chapters.length],
   );
 
+  // Reading position moved (a WebView scroll message or the native reader's
+  // scroll): cache it, mark the TTS queue stale if paused, advance the furthest
+  // mark, and persist best-effort. Shared so both engines behave identically.
+  const recordOffset = useCallback(
+    (offset: number) => {
+      restoreOffsetRef.current = offset;
+      if (ttsRef.current && !ttsRef.current.status.playing) ttsStaleRef.current = true;
+      setFurthest((prior) =>
+        !prior ||
+        chapterIndex > prior.chapterIndex ||
+        (chapterIndex === prior.chapterIndex && offset > prior.offset)
+          ? { chapterIndex, offset }
+          : prior,
+      );
+      void persistPosition({ bookId, chapterIndex, offset });
+    },
+    [bookId, chapterIndex],
+  );
+
   // --- WebView bridge ------------------------------------------------------
   const handleMessage = useCallback(
     (event: WebViewMessageEvent) => {
@@ -786,25 +805,9 @@ function ReaderInner({
               : prev,
           );
           break;
-        case 'scroll': {
-          const offset = Number(msg.offset) || 0;
-          restoreOffsetRef.current = offset;
-          // Reading moved while TTS was paused → the queue is stale; the
-          // next play picks up from here instead of the old sentence.
-          if (ttsRef.current && !ttsRef.current.status.playing) ttsStaleRef.current = true;
-          setFurthest((prior) => {
-            if (
-              !prior ||
-              chapterIndex > prior.chapterIndex ||
-              (chapterIndex === prior.chapterIndex && offset > prior.offset)
-            ) {
-              return { chapterIndex, offset };
-            }
-            return prior;
-          });
-          void persistPosition({ bookId, chapterIndex, offset });
+        case 'scroll':
+          recordOffset(Number(msg.offset) || 0);
           break;
-        }
         case 'pageEdge':
           // Page turn past the chapter boundary → flow into the neighbor,
           // landing on its last page when going backwards.
@@ -819,12 +822,15 @@ function ReaderInner({
           break;
       }
     },
-    [bookId, chapterIndex, goToChapter, handleTapHighlight],
+    [chapterIndex, goToChapter, handleTapHighlight, recordOffset],
   );
 
+  // Paged page-turns only exist in the WebView reader; the native reader is
+  // scroll-only for now, so its Prev/Next move between chapters.
+  const pagedNav = pagination === 'paged' && readerEngine === 'webview';
   const turnOrGo = useCallback(
     (delta: number) => {
-      if (pagination === 'paged') {
+      if (pagedNav) {
         webviewRef.current?.injectJavaScript(
           `window.__reader && window.__reader.turnPage(${delta});true;`,
         );
@@ -832,7 +838,7 @@ function ReaderInner({
         goToChapter(chapterIndex + delta, delta < 0 ? Number.MAX_SAFE_INTEGER : 0);
       }
     },
-    [chapterIndex, goToChapter, pagination],
+    [chapterIndex, goToChapter, pagedNav],
   );
 
   if (!book || !chapter) {
@@ -843,8 +849,8 @@ function ReaderInner({
     );
   }
 
-  const prevDisabled = pagination === 'scroll' && chapterIndex === 0;
-  const nextDisabled = pagination === 'scroll' && chapterIndex >= chapters.length - 1;
+  const prevDisabled = !pagedNav && chapterIndex === 0;
+  const nextDisabled = !pagedNav && chapterIndex >= chapters.length - 1;
   const currentVoiceName =
     voices.find((v) => v.identifier === ttsVoiceId)?.name ??
     (ttsVoiceId ? 'Selected voice' : 'Automatic');
@@ -862,6 +868,7 @@ function ReaderInner({
           // Pure-RN reader (native selection → offsets). Scroll mode; the WebView
           // still owns paged mode, cross-page extend, and TTS sentence marks.
           <NativeReaderView
+            key={chapterIndex}
             paragraphs={chapter.paragraphs}
             title={chapter.title}
             annotations={chapterAnnotations}
@@ -870,8 +877,11 @@ function ReaderInner({
             color={panel.fg}
             background={panel.bg}
             highlightAlpha={Number(READER_THEMES[theme]?.hlAlpha ?? READER_THEMES.paper.hlAlpha)}
+            initialOffset={restoreOffsetRef.current}
             onSelection={(sel) => setSelection(sel)}
             onTapHighlight={handleTapHighlight}
+            onOffsetChange={recordOffset}
+            onChromeVisibility={setChromeVisible}
           />
         ) : (
           <WebView
