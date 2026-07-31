@@ -314,6 +314,9 @@ function ReaderInner({
   const [settingsVisible, setSettingsVisible] = useState(false);
   const [ttsVisible, setTtsVisible] = useState(false);
   const [ttsPlaying, setTtsPlaying] = useState(false);
+  // The sentence TTS is speaking, as a chapter-relative range. Drives the native
+  // readers' read-along tint; the WebView reader marks it via injectJavaScript.
+  const [ttsMark, setTtsMark] = useState<{ start: number; end: number } | undefined>();
   const [ttsRate, setTtsRate] = useState(preferences.ttsRate ?? 1.0);
   const [ttsVoiceId, setTtsVoiceId] = useState<string | undefined>(preferences.ttsVoice);
   const [voiceSheetVisible, setVoiceSheetVisible] = useState(false);
@@ -441,8 +444,11 @@ function ReaderInner({
     tts.setListener((status) => {
       setTtsPlaying(status.playing);
       if (status.sentence && status.playing) {
+        const { start, end } = status.sentence;
+        // Native reader follows the mark via state; WebView reader via injection.
+        setTtsMark({ start, end });
         webviewRef.current?.injectJavaScript(
-          `window.__reader && window.__reader.markSentence(${status.sentence.start}, ${status.sentence.end});true;`,
+          `window.__reader && window.__reader.markSentence(${start}, ${end});true;`,
         );
       }
       // Ran off the end of the chapter → advance and keep reading. Note the
@@ -471,6 +477,9 @@ function ReaderInner({
 
   useEffect(() => {
     const tts = getTts();
+    // The mark is chapter-relative; drop the old chapter's before the new one
+    // renders so it can't tint the wrong text (the next spoken sentence resets it).
+    setTtsMark(undefined);
     const offset =
       restoreOffsetRef.current >= Number.MAX_SAFE_INTEGER
         ? Math.max(0, chapterText.length - 1)
@@ -547,6 +556,7 @@ function ReaderInner({
   const closeTts = useCallback(() => {
     getTts().stop();
     setTtsVisible(false);
+    setTtsMark(undefined);
     webviewRef.current?.injectJavaScript(
       'window.__reader && window.__reader.clearSentence();true;',
     );
@@ -887,8 +897,8 @@ function ReaderInner({
         style={{ flex: 1, paddingTop: insets.top, paddingBottom: ttsVisible ? ttsBarHeight : 0 }}
       >
         {readerEngine === 'native' ? (
-          // Pure-RN reader (native selection → offsets). The WebView still owns
-          // cross-page extend and TTS sentence marks.
+          // Pure-RN reader (native selection → offsets, with the TTS read-along
+          // mark). The WebView still owns cross-page extend.
           pagination === 'paged' ? (
             <NativePagedView
               key={chapterIndex}
@@ -900,6 +910,7 @@ function ReaderInner({
               color={panel.fg}
               background={panel.bg}
               highlightAlpha={Number(READER_THEMES[theme]?.hlAlpha ?? READER_THEMES.paper.hlAlpha)}
+              ttsMark={ttsMark}
               onSelection={handleNativeSelection}
               onTapHighlight={handleTapHighlight}
               onReachStart={() => goToChapter(chapterIndex - 1, Number.MAX_SAFE_INTEGER)}
@@ -918,6 +929,7 @@ function ReaderInner({
               background={panel.bg}
               highlightAlpha={Number(READER_THEMES[theme]?.hlAlpha ?? READER_THEMES.paper.hlAlpha)}
               initialOffset={restoreOffsetRef.current}
+              ttsMark={ttsMark}
               onSelection={handleNativeSelection}
               onTapHighlight={handleTapHighlight}
               onOffsetChange={recordOffset}

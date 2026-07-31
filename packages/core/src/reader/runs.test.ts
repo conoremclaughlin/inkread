@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Annotation } from '../models/types';
-import { segmentChapterRuns, segmentParagraph } from './runs';
+import { applyMark, segmentChapterRuns, segmentParagraph } from './runs';
 
 function annotation(start: number, end: number, overrides?: Partial<Annotation>): Annotation {
   return {
@@ -61,5 +61,54 @@ describe('segmentChapterRuns', () => {
     result.forEach((p, i) => {
       expect(p.runs.map((r) => r.text).join('')).toBe(paragraphs[i]);
     });
+  });
+});
+
+describe('applyMark', () => {
+  const plain = [{ text: 'Hello world.' }]; // one plain run at paragraph start 0
+
+  it('returns the same runs (identity) when there is no mark', () => {
+    expect(applyMark(plain, 0)).toBe(plain);
+    expect(applyMark(plain, 0, { start: 5, end: 5 })).toBe(plain); // empty range
+  });
+
+  it('returns the same runs when the mark misses this paragraph', () => {
+    // Paragraph occupies [100, 112); the mark is elsewhere.
+    const runs = [{ text: 'Hello world.' }];
+    expect(applyMark(runs, 100, { start: 0, end: 40 })).toBe(runs);
+  });
+
+  it('splits a plain run into before / marked / after', () => {
+    // Mark "world" (offsets 6..11) within "Hello world." at paragraph start 0.
+    const runs = applyMark(plain, 0, { start: 6, end: 11 });
+    expect(runs.map((r) => r.text)).toEqual(['Hello ', 'world', '.']);
+    expect(runs.map((r) => r.marked)).toEqual([undefined, true, undefined]);
+  });
+
+  it('marks from the paragraph start with no leading slice', () => {
+    const runs = applyMark(plain, 0, { start: 0, end: 5 });
+    expect(runs.map((r) => r.text)).toEqual(['Hello', ' world.']);
+    expect(runs[0]?.marked).toBe(true);
+    expect(runs[1]?.marked).toBeUndefined();
+  });
+
+  it('layers the mark on top of an annotation run, preserving the annotation', () => {
+    // "Hello world." with "world" highlighted, then the whole thing marked.
+    const annotated = segmentParagraph('Hello world.', 0, [annotation(6, 11)]);
+    const marked = applyMark(annotated, 0, { start: 0, end: 12 });
+    const worldRun = marked.find((r) => r.text === 'world');
+    expect(worldRun?.annotation?.id).toBe('a1');
+    expect(worldRun?.marked).toBe(true);
+    // Every character is still covered and the concatenation is exact.
+    expect(marked.map((r) => r.text).join('')).toBe('Hello world.');
+    expect(marked.every((r) => r.marked)).toBe(true);
+  });
+
+  it('clamps a mark that spills past the paragraph to the overlapping slice', () => {
+    // Paragraph at offset 10; mark 5..15 → covers local [0,5) = "middl".
+    const runs = applyMark([{ text: 'middle chunk' }], 10, { start: 5, end: 15 });
+    expect(runs.map((r) => r.text)).toEqual(['middl', 'e chunk']);
+    expect(runs[0]?.marked).toBe(true);
+    expect(runs[1]?.marked).toBeUndefined();
   });
 });

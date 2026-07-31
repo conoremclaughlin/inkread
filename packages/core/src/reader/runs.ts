@@ -17,6 +17,12 @@ export interface Run {
   annotation?: Annotation;
 }
 
+/** A run further split by the transient TTS sentence mark (read-along tint). */
+export interface MarkedRun extends Run {
+  /** True when this run falls inside the current TTS sentence mark. */
+  marked?: boolean;
+}
+
 export interface ParagraphRuns {
   /** Character offset of this paragraph within `paragraphs.join('\n')`. */
   start: number;
@@ -48,6 +54,46 @@ export function segmentParagraph(
   }
   if (cursor < text.length) runs.push({ text: text.slice(cursor) });
   return runs;
+}
+
+/**
+ * Overlay a transient TTS sentence mark onto a paragraph's annotation runs.
+ *
+ * The mark is the sentence currently being read aloud — a [start, end) range in
+ * chapter text (matching `ParagraphRuns.start`). We split each run at the mark's
+ * boundaries and tag the covered slices `marked`, layering *on top of* whatever
+ * annotation a run already carries (so a spoken sentence inside a highlight
+ * keeps its highlight colour and gains the read-along tint). With no mark — or a
+ * mark that misses this paragraph — the original runs are returned unchanged
+ * (same array reference, so a memoised paragraph can skip re-rendering).
+ */
+export function applyMark(
+  runs: Run[],
+  paragraphStart: number,
+  mark?: { start: number; end: number },
+): MarkedRun[] {
+  if (!mark || mark.end <= mark.start) return runs;
+  const result: MarkedRun[] = [];
+  let offset = paragraphStart;
+  let touched = false;
+  for (const run of runs) {
+    const runStart = offset;
+    const runEnd = offset + run.text.length;
+    offset = runEnd;
+    const from = Math.max(runStart, mark.start);
+    const to = Math.min(runEnd, mark.end);
+    if (to <= from) {
+      result.push(run); // no overlap with the mark
+      continue;
+    }
+    touched = true;
+    const a = from - runStart;
+    const b = to - runStart;
+    if (a > 0) result.push({ ...run, text: run.text.slice(0, a) });
+    result.push({ ...run, text: run.text.slice(a, b), marked: true });
+    if (b < run.text.length) result.push({ ...run, text: run.text.slice(b) });
+  }
+  return touched ? result : runs;
 }
 
 /**

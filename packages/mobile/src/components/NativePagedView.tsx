@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Pressable,
   ScrollView,
@@ -8,8 +8,9 @@ import {
   type NativeSyntheticEvent,
 } from 'react-native';
 import { UITextView } from '@bsky.app/react-native-uitextview';
-import { HIGHLIGHT_COLORS, segmentChapterRuns, type Annotation } from '@inkread/core';
+import { applyMark, segmentChapterRuns, type Annotation } from '@inkread/core';
 import { modelOffsetForRendered, renderedParagraphStarts } from '../lib/pagedOffsets';
+import { renderRun } from './readerRuns';
 
 /**
  * Native paged reader. Rather than clip + translate a selectable view (which can
@@ -22,6 +23,11 @@ import { modelOffsetForRendered, renderedParagraphStarts } from '../lib/pagedOff
  *
  * Turns are edge taps (left/right thirds); the middle is left for selection.
  * Past the first/last page we flow into the neighbouring chapter.
+ *
+ * The TTS sentence mark tints the sentence being spoken. Because the body is one
+ * UITextView we have no per-character geometry, so page-follow is estimated from
+ * the mark's position in the text (see the effect below) — good enough to keep
+ * the spoken line on the visible page as playback advances.
  */
 export interface NativePagedViewProps {
   paragraphs: string[];
@@ -32,6 +38,8 @@ export interface NativePagedViewProps {
   color: string;
   background: string;
   highlightAlpha: number;
+  /** The sentence TTS is speaking, as a chapter-relative range (read-along tint). */
+  ttsMark?: { start: number; end: number };
   onSelection: (selection: { start: number; end: number; text: string } | undefined) => void;
   onTapHighlight: (id: string) => void;
   onReachStart: () => void;
@@ -42,11 +50,6 @@ export interface NativePagedViewProps {
 
 type SelectionEvent = { nativeEvent: { start: number; end: number } };
 
-function highlightFill(color: string, alpha: number): string {
-  const rgb = HIGHLIGHT_COLORS[color] ?? HIGHLIGHT_COLORS.yellow!;
-  return `rgba(${rgb}, ${alpha})`;
-}
-
 export function NativePagedView({
   paragraphs,
   title,
@@ -56,6 +59,7 @@ export function NativePagedView({
   color,
   background,
   highlightAlpha,
+  ttsMark,
   onSelection,
   onTapHighlight,
   onReachStart,
@@ -86,17 +90,24 @@ export function NativePagedView({
   const [viewportH, setViewportH] = useState(0);
   const [contentH, setContentH] = useState(0);
   const [page, setPage] = useState(0);
+  // Current page mirrored in a ref so the TTS page-follow effect can compare
+  // against it without depending on `page` (which would fight a manual turn).
+  const pageRef = useRef(0);
   const activeRef = useRef(false);
 
   // Whole-line page step so a turn never leaves a half-line at the fold.
   const pageStep = Math.max(lineHeight, Math.floor((viewportH - 24) / lineHeight) * lineHeight);
   const totalPages = Math.max(1, Math.ceil(contentH / pageStep));
 
-  const goToPage = (next: number) => {
-    const clamped = Math.max(0, Math.min(totalPages - 1, next));
-    setPage(clamped);
-    scrollRef.current?.scrollTo({ y: clamped * pageStep, animated: true });
-  };
+  const goToPage = useCallback(
+    (next: number) => {
+      const clamped = Math.max(0, Math.min(totalPages - 1, next));
+      pageRef.current = clamped;
+      setPage(clamped);
+      scrollRef.current?.scrollTo({ y: clamped * pageStep, animated: true });
+    },
+    [totalPages, pageStep],
+  );
 
   const turn = (delta: number) => {
     const next = page + delta;
@@ -106,6 +117,32 @@ export function NativePagedView({
   };
 
   const onViewportLayout = (e: LayoutChangeEvent) => setViewportH(e.nativeEvent.layout.height);
+
+  const paraIndexForOffset = useCallback(
+    (offset: number) => {
+      let target = 0;
+      for (let i = 0; i < paras.length; i++) {
+        if (paras[i]!.start <= offset) target = i;
+        else break;
+      }
+      return target;
+    },
+    [paras],
+  );
+
+  // Follow the spoken sentence. With no per-character geometry in a single
+  // UITextView, we estimate the mark's vertical position from its share of the
+  // rendered text (rendered length adds one '\n' per paragraph gap) and turn to
+  // that page. Reads `pageRef` rather than `page` so a manual turn isn't undone.
+  useEffect(() => {
+    if (!ttsMark || contentH === 0 || pageStep === 0) return;
+    const renderedTotal = body.length + Math.max(0, paras.length - 1);
+    const renderedMarkStart = ttsMark.start + paraIndexForOffset(ttsMark.start);
+    const estY = (renderedMarkStart / Math.max(1, renderedTotal)) * contentH;
+    const target = Math.max(0, Math.min(totalPages - 1, Math.floor(estY / pageStep)));
+    if (target !== pageRef.current) goToPage(target);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ttsMark, contentH, pageStep]);
 
   const handleSelection = (event: NativeSyntheticEvent<unknown> | SelectionEvent) => {
     const { start, end } = (event as SelectionEvent).nativeEvent;
@@ -142,19 +179,10 @@ export function NativePagedView({
           onSelectionChange={handleSelection}
           style={{ fontFamily: 'Georgia', fontSize, lineHeight, color }}
         >
-          {paras.flatMap(({ runs }, pIndex) => {
-            const nodes = runs.map((run, rIndex) =>
-              run.annotation ? (
-                <UITextView
-                  key={`${pIndex}:${rIndex}`}
-                  style={{ backgroundColor: highlightFill(run.annotation.color, highlightAlpha) }}
-                  onPress={() => onTapHighlight(run.annotation!.id)}
-                >
-                  {run.text}
-                </UITextView>
-              ) : (
-                run.text
-              ),
+          {paras.flatMap(({ runs, start }, pIndex) => {
+            const marked = applyMark(runs, start, ttsMark);
+            const nodes = marked.map((run, rIndex) =>
+              renderRun(run, `${pIndex}:${rIndex}`, { highlightAlpha, onTapHighlight }),
             );
             return pIndex < paras.length - 1
               ? [...nodes, <UITextView key={`nl:${pIndex}`}>{'\n\n'}</UITextView>]

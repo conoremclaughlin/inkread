@@ -1,13 +1,17 @@
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ScrollView,
   StyleSheet,
   View,
+  type LayoutChangeEvent,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
+  type StyleProp,
+  type TextStyle,
 } from 'react-native';
 import { UITextView } from '@bsky.app/react-native-uitextview';
-import { HIGHLIGHT_COLORS, segmentChapterRuns, type Annotation } from '@inkread/core';
+import { applyMark, segmentChapterRuns, type Annotation, type Run } from '@inkread/core';
+import { renderRun } from './readerRuns';
 
 /**
  * Pure-React-Native chapter reader (no WebView), scroll mode. Each paragraph is
@@ -22,8 +26,10 @@ import { HIGHLIGHT_COLORS, segmentChapterRuns, type Annotation } from '@inkread/
  * offset to get chapter-relative offsets that match every annotation locator.
  *
  * Ported from the WebView reader: selection→offsets, tap-a-highlight, reading
- * position (report on scroll + restore on open), and chrome show/hide driven by
- * scroll direction (a tap toggle would fight the native selection gesture).
+ * position (report on scroll + restore on open), chrome show/hide driven by
+ * scroll direction (a tap toggle would fight the native selection gesture), and
+ * the TTS sentence mark — the read-along tint on the sentence being spoken,
+ * which also scrolls itself into view as playback advances.
  */
 export interface NativeReaderViewProps {
   paragraphs: string[];
@@ -38,6 +44,8 @@ export interface NativeReaderViewProps {
   highlightAlpha: number;
   /** Character offset to restore to on open (top of viewport). */
   initialOffset?: number;
+  /** The sentence TTS is speaking, as a chapter-relative range (read-along tint). */
+  ttsMark?: { start: number; end: number };
   /** Fired with chapter-relative offsets, or undefined when the selection clears. */
   onSelection: (selection: { start: number; end: number; text: string } | undefined) => void;
   onTapHighlight: (id: string) => void;
@@ -49,10 +57,49 @@ export interface NativeReaderViewProps {
 
 type SelectionEvent = { nativeEvent: { start: number; end: number } };
 
-function highlightFill(color: string, alpha: number): string {
-  const rgb = HIGHLIGHT_COLORS[color] ?? HIGHLIGHT_COLORS.yellow!;
-  return `rgba(${rgb}, ${alpha})`;
+/**
+ * One paragraph, memoised so a moving TTS mark only re-renders the paragraph it
+ * enters and the one it leaves — not the whole chapter, sentence after sentence.
+ * Every prop is a stable reference or a primitive except `mark`, which the
+ * parent hands only to the paragraph the mark currently touches.
+ */
+interface ParagraphProps {
+  index: number;
+  base: number;
+  runs: Run[];
+  mark?: { start: number; end: number };
+  style: StyleProp<TextStyle>;
+  highlightAlpha: number;
+  onSelect: (paraIndex: number, base: number, event: SelectionEvent) => void;
+  onTapHighlight: (id: string) => void;
+  onLayoutY: (index: number, y: number) => void;
 }
+
+const MarkableParagraph = memo(function MarkableParagraph({
+  index,
+  base,
+  runs,
+  mark,
+  style,
+  highlightAlpha,
+  onSelect,
+  onTapHighlight,
+  onLayoutY,
+}: ParagraphProps) {
+  const marked = applyMark(runs, base, mark);
+  return (
+    <View onLayout={(e: LayoutChangeEvent) => onLayoutY(index, e.nativeEvent.layout.y)}>
+      <UITextView
+        selectable
+        uiTextView
+        onSelectionChange={(e) => onSelect(index, base, e as SelectionEvent)}
+        style={style}
+      >
+        {marked.map((run, runIndex) => renderRun(run, String(runIndex), { highlightAlpha, onTapHighlight }))}
+      </UITextView>
+    </View>
+  );
+});
 
 export function NativeReaderView({
   paragraphs,
@@ -64,6 +111,7 @@ export function NativeReaderView({
   background,
   highlightAlpha,
   initialOffset = 0,
+  ttsMark,
   onSelection,
   onTapHighlight,
   onOffsetChange,
@@ -81,6 +129,7 @@ export function NativeReaderView({
   const restoredRef = useRef(false);
   const lastScrollY = useRef(0);
   const lastReportedOffset = useRef(-1);
+  const [viewportH, setViewportH] = useState(0);
   // The paragraph whose selection is currently live. When another paragraph
   // reports a selection we treat the previous one as cleared, so only one
   // selection is ever active (independent UITextViews don't clear each other).
@@ -94,16 +143,23 @@ export function NativeReaderView({
     onChromeVisibility?.(true);
   }, [onChromeVisibility]);
 
+  const paraIndexForOffset = useCallback(
+    (offset: number) => {
+      let target = 0;
+      for (let i = 0; i < paras.length; i++) {
+        if (paras[i]!.start <= offset) target = i;
+        else break;
+      }
+      return target;
+    },
+    [paras],
+  );
+
   // Restore to the paragraph containing `initialOffset` once its box is measured.
-  const restoreIndex = useMemo(() => {
-    if (initialOffset <= 0) return -1;
-    let target = 0;
-    for (let i = 0; i < paras.length; i++) {
-      if (paras[i]!.start <= initialOffset) target = i;
-      else break;
-    }
-    return target;
-  }, [initialOffset, paras]);
+  const restoreIndex = useMemo(
+    () => (initialOffset > 0 ? paraIndexForOffset(initialOffset) : -1),
+    [initialOffset, paraIndexForOffset],
+  );
 
   const maybeRestore = useCallback(() => {
     if (restoredRef.current || restoreIndex < 0) return;
@@ -111,18 +167,22 @@ export function NativeReaderView({
     if (y == null) return;
     restoredRef.current = true;
     // Defer so the ScrollView has its content height before we jump.
-    requestAnimationFrame(() => scrollRef.current?.scrollTo({ y: Math.max(0, y - 8), animated: false }));
+    requestAnimationFrame(() =>
+      scrollRef.current?.scrollTo({ y: Math.max(0, y - 8), animated: false }),
+    );
   }, [restoreIndex]);
 
-  const handleParaLayout = (index: number) => (y: number) => {
-    paraY.current[index] = y;
-    maybeRestore();
-  };
+  const handleLayoutY = useCallback(
+    (index: number, y: number) => {
+      paraY.current[index] = y;
+      maybeRestore();
+    },
+    [maybeRestore],
+  );
 
-  const handleSelection =
-    (paraIndex: number, base: number) =>
-    (event: NativeSyntheticEvent<unknown> | SelectionEvent) => {
-      const { start, end } = (event as SelectionEvent).nativeEvent;
+  const handleSelect = useCallback(
+    (paraIndex: number, base: number, event: SelectionEvent) => {
+      const { start, end } = event.nativeEvent;
       if (end <= start) {
         if (activeParaRef.current === paraIndex) {
           activeParaRef.current = undefined;
@@ -139,7 +199,9 @@ export function NativeReaderView({
         return;
       }
       onSelection({ start: from, end: to, text });
-    };
+    },
+    [fullText, onSelection],
+  );
 
   const handleScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const y = event.nativeEvent.contentOffset.y;
@@ -169,7 +231,27 @@ export function NativeReaderView({
     }
   };
 
-  const bodyStyle = { fontFamily: 'Georgia', fontSize, lineHeight, color };
+  // Keep the spoken sentence on screen: when the mark moves to a paragraph that
+  // isn't comfortably in view, ease it toward the upper third. We only scroll
+  // when it's actually off the comfortable band, so successive sentences within
+  // one visible paragraph don't jitter the page.
+  useEffect(() => {
+    if (!ttsMark || viewportH === 0) return;
+    const y = paraY.current[paraIndexForOffset(ttsMark.start)];
+    if (y == null) return;
+    const top = lastScrollY.current;
+    if (y < top + 48 || y > top + viewportH - 96) {
+      scrollRef.current?.scrollTo({ y: Math.max(0, y - viewportH * 0.3), animated: true });
+    }
+  }, [ttsMark, viewportH, paraIndexForOffset]);
+
+  const bodyStyle = useMemo<StyleProp<TextStyle>>(
+    () => [styles.paragraph, { fontFamily: 'Georgia', fontSize, lineHeight, color }],
+    [fontSize, lineHeight, color],
+  );
+
+  const markEnd = ttsMark?.end ?? -1;
+  const markStart = ttsMark?.start ?? -1;
 
   return (
     <ScrollView
@@ -178,6 +260,7 @@ export function NativeReaderView({
       contentContainerStyle={styles.content}
       scrollEventThrottle={16}
       onScroll={handleScroll}
+      onLayout={(e) => setViewportH(e.nativeEvent.layout.height)}
     >
       <UITextView
         style={[styles.title, { color, fontSize: Math.round(fontSize * 1.45) }]}
@@ -185,33 +268,24 @@ export function NativeReaderView({
       >
         {title}
       </UITextView>
-      {paras.map(({ start, runs }, paraIndex) => (
-        <View
-          key={paraIndex}
-          onLayout={(e) => handleParaLayout(paraIndex)(e.nativeEvent.layout.y)}
-        >
-          <UITextView
-            selectable
-            uiTextView
-            onSelectionChange={handleSelection(paraIndex, start)}
-            style={[styles.paragraph, bodyStyle]}
-          >
-            {runs.map((run, runIndex) =>
-              run.annotation ? (
-                <UITextView
-                  key={runIndex}
-                  style={{ backgroundColor: highlightFill(run.annotation.color, highlightAlpha) }}
-                  onPress={() => onTapHighlight(run.annotation!.id)}
-                >
-                  {run.text}
-                </UITextView>
-              ) : (
-                run.text
-              ),
-            )}
-          </UITextView>
-        </View>
-      ))}
+      {paras.map(({ start, runs }, paraIndex) => {
+        const paraEnd = start + (paragraphs[paraIndex]?.length ?? 0);
+        const mark = ttsMark && markStart < paraEnd && markEnd > start ? ttsMark : undefined;
+        return (
+          <MarkableParagraph
+            key={paraIndex}
+            index={paraIndex}
+            base={start}
+            runs={runs}
+            mark={mark}
+            style={bodyStyle}
+            highlightAlpha={highlightAlpha}
+            onSelect={handleSelect}
+            onTapHighlight={onTapHighlight}
+            onLayoutY={handleLayoutY}
+          />
+        );
+      })}
       <View style={styles.tail} />
     </ScrollView>
   );
