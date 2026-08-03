@@ -1,9 +1,11 @@
 import type {
   Annotation,
   BookMeta,
+  BookVisibility,
   Chapter,
   ChapterRecording,
   Comment,
+  PublicationStatus,
   ReadingPosition,
   VoiceCast,
 } from '@inkread/core';
@@ -94,6 +96,16 @@ export interface LibraryRepository {
   listComments(bookId: string, chapterIndex: number): Promise<Comment[]>;
   createComment(input: CreateCommentInput): Promise<Comment>;
   deleteComment(commentId: string): Promise<void>;
+  /** Cast (+1 / −1) or clear (0) the current user's vote on a comment. */
+  voteOnComment(commentId: string, value: 1 | -1 | 0): Promise<void>;
+  /** The current user's own vote on each given comment (their rows only). */
+  listMyVotes(commentIds: string[]): Promise<Record<string, 1 | -1>>;
+
+  /** Owner-only: publish/unpublish a book and set its serialization status. */
+  setBookPublication(
+    bookId: string,
+    patch: { visibility?: BookVisibility; status?: PublicationStatus },
+  ): Promise<BookSummary>;
 
   /** The book's multi-voice cast, or undefined if none has been set up. */
   getVoiceCast(bookId: string): Promise<VoiceCast | undefined>;

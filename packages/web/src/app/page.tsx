@@ -1,82 +1,120 @@
 import Link from 'next/link';
-import { getRepository } from '@/lib/data';
-import { signOut } from '@/lib/auth/actions';
-import { ImportPdf } from '@/components/ImportPdf';
-import { BookActions } from '@/components/BookActions';
-import { LocalLibraryFallback } from '@/components/LocalFallback';
+import { createClient } from '@/lib/supabase/server';
+import { listActiveSeries, listTopPublicComments } from '@/lib/data/public';
+import { SeriesCard } from '@/components/SeriesCard';
+import { CommentsBoard } from '@/components/CommentsBoard';
 
-export default async function LibraryPage() {
-  let books;
-  let progress: Map<string, number>;
+/**
+ * Public home / discovery page — open to everyone, no session required. Browse
+ * the serials being actively published, then read the liveliest reader
+ * comments (vote-ranked) across all of them at the bottom.
+ */
+export default async function HomePage() {
+  let signedIn = false;
   try {
-    const repository = await getRepository();
-    books = await repository.listBooks();
-    progress = new Map(
-      await Promise.all(
-        books.map(async (book): Promise<[string, number]> => {
-          const position = await repository.getPosition(book.id);
-          if (!position || book.chapterCount === 0) return [book.id, 0];
-          const marker = position.furthest ?? position;
-          return [book.id, Math.round(((marker.chapterIndex + 1) / book.chapterCount) * 100)];
-        }),
-      ),
-    );
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    signedIn = Boolean(user);
   } catch {
-    // Data layer unreachable — show the on-device library.
-    return <LocalLibraryFallback />;
+    signedIn = false;
   }
 
+  const [series, topComments] = await Promise.all([
+    listActiveSeries(),
+    listTopPublicComments(8),
+  ]);
+
   return (
-    <main className="mx-auto max-w-3xl px-6 py-10">
-      <header className="flex items-center justify-between">
-        <h1 className="font-serif text-3xl">inkread</h1>
-        <div className="flex items-center gap-3">
-          <ImportPdf />
-          <form action={signOut}>
-            <button className="rounded-full px-4 py-2.5 text-sm text-[#6b6459] transition hover:bg-[#f0e6da] hover:text-[#26221c]">
-              Log out
-            </button>
-          </form>
-        </div>
+    <div className="min-h-screen">
+      <header className="mx-auto flex max-w-5xl items-center justify-between px-6 py-5">
+        <Link href="/" className="font-serif text-2xl tracking-tight text-[#26221c]">
+          inkread
+        </Link>
+        <nav className="flex items-center gap-2 text-sm">
+          {signedIn ? (
+            <Link
+              href="/library"
+              className="rounded-full bg-[#8b5e3c] px-4 py-2 font-medium text-white transition hover:bg-[#7a5133]"
+            >
+              Your library
+            </Link>
+          ) : (
+            <>
+              <Link
+                href="/login"
+                className="rounded-full px-4 py-2 text-[#6b6459] transition hover:bg-[#f0e6da] hover:text-[#26221c]"
+              >
+                Sign in
+              </Link>
+              <Link
+                href="/signup"
+                className="rounded-full bg-[#8b5e3c] px-4 py-2 font-medium text-white transition hover:bg-[#7a5133]"
+              >
+                Get started
+              </Link>
+            </>
+          )}
+        </nav>
       </header>
 
-      {books.length === 0 ? (
-        <div className="mt-24 text-center">
-          <h2 className="text-xl font-semibold">Your library is empty</h2>
-          <p className="mx-auto mt-2 max-w-md text-[#6b6459]">
-            Import a PDF and inkread will convert it into a clean, reflowable book you can read,
-            listen to, and annotate — on your phone and right here.
+      <main className="mx-auto max-w-5xl px-6">
+        {/* Hero */}
+        <section className="border-b border-[#ece4d7] py-14 text-center sm:py-20">
+          <p className="text-sm font-medium uppercase tracking-[0.2em] text-[#a9772f]">
+            Serialized reading
           </p>
-        </div>
-      ) : (
-        <ul className="mt-8 space-y-3">
-          {books.map((book) => (
-            <li
-              key={book.id}
-              className="group flex rounded-xl border border-[#e6dfd4] bg-white"
-            >
-              <div className="w-1.5 shrink-0 rounded-l-xl bg-[#8b5e3c]" />
-              <Link href={`/read/${book.id}`} className="flex-1 p-4 transition hover:bg-[#faf7f2]">
-                <div className="font-semibold">{book.title}</div>
-                {book.author ? <div className="text-sm text-[#6b6459]">{book.author}</div> : null}
-                <div className="mt-1 text-xs text-[#6b6459]">
-                  {book.chapterCount} chapters
-                  {(progress.get(book.id) ?? 0) > 0 ? ` · ${progress.get(book.id)}% read` : ''}
-                </div>
-              </Link>
-              <div className="flex items-center gap-1 px-3 text-sm">
-                <Link
-                  href={`/notes/${book.id}`}
-                  className="rounded-lg px-3 py-2 font-medium text-[#8b5e3c] transition hover:bg-[#f0e6da]"
-                >
-                  Notes
-                </Link>
-                <BookActions bookId={book.id} title={book.title} />
-              </div>
-            </li>
-          ))}
-        </ul>
-      )}
-    </main>
+          <h1 className="mx-auto mt-4 max-w-2xl font-serif text-4xl leading-tight text-[#26221c] sm:text-5xl">
+            Follow the stories being written right now.
+          </h1>
+          <p className="mx-auto mt-5 max-w-xl text-lg leading-relaxed text-[#6b6459]">
+            Browse serials as their chapters arrive, listen with natural voices, and read along with
+            a community in the margins.
+          </p>
+        </section>
+
+        {/* Actively publishing */}
+        <section className="py-12">
+          <div className="mb-6 flex items-baseline justify-between">
+            <h2 className="font-serif text-2xl text-[#26221c]">Actively publishing</h2>
+            <span className="text-sm text-[#8a8175]">
+              {series.length} {series.length === 1 ? 'series' : 'series'}
+            </span>
+          </div>
+          {series.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-[#e0d8ca] bg-[#fbf8f2] px-6 py-16 text-center">
+              <p className="font-serif text-lg text-[#26221c]">No public series yet</p>
+              <p className="mx-auto mt-2 max-w-md text-[#6b6459]">
+                {signedIn
+                  ? 'Publish a book from your library and it will appear here for everyone to follow.'
+                  : 'Sign in and publish a work to start a serial the whole community can follow.'}
+              </p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              {series.map((s) => (
+                <SeriesCard key={s.id} series={s} />
+              ))}
+            </div>
+          )}
+        </section>
+
+        {/* Community discussion — prominent at the bottom, ranked by votes */}
+        <section className="border-t border-[#ece4d7] py-12">
+          <div className="mb-2 flex items-center gap-2">
+            <h2 className="font-serif text-2xl text-[#26221c]">What readers are saying</h2>
+          </div>
+          <p className="mb-6 max-w-xl text-[#6b6459]">
+            The most-upvoted comments across every series. {signedIn ? '' : 'Sign in to join in and vote.'}
+          </p>
+          <CommentsBoard comments={topComments} signedIn={signedIn} showSeries />
+        </section>
+      </main>
+
+      <footer className="mx-auto max-w-5xl px-6 py-10 text-sm text-[#a49a8b]">
+        inkread — read, listen, annotate.
+      </footer>
+    </div>
   );
 }

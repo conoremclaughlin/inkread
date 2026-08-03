@@ -697,7 +697,7 @@ export function Reader({
         }`}
       >
         <div className="flex min-w-0 items-stretch">
-          <Link href="/" onClick={teardownTts} className={`${chromeButton} shrink-0 font-medium`}>
+          <Link href="/library" onClick={teardownTts} className={`${chromeButton} shrink-0 font-medium`}>
             ← Library
           </Link>
           <span className="flex items-center truncate px-1.5 font-semibold opacity-80">

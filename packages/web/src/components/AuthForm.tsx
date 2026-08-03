@@ -23,7 +23,7 @@ export function AuthForm({ mode }: { mode: 'login' | 'signup' }) {
       setPending(false);
       return;
     }
-    router.push('/');
+    router.push('/library');
     router.refresh();
   };
 

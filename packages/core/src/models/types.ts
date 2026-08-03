@@ -35,6 +35,12 @@ export interface Chapter {
   sourcePages?: { from: number; to: number };
 }
 
+/** Is a book private to its owner, or published for anyone to discover. */
+export type BookVisibility = 'private' | 'public';
+
+/** Whether a published work is still gaining chapters, or finished. */
+export type PublicationStatus = 'ongoing' | 'completed';
+
 export interface BookMeta {
   id: string;
   title: string;
@@ -42,6 +48,10 @@ export interface BookMeta {
   language?: string;
   /** Where this book came from. */
   source: 'pdf' | 'epub' | 'text';
+  /** Publication reach — defaults to 'private' for imported personal books. */
+  visibility?: BookVisibility;
+  /** Serialization state of a published work — defaults to 'ongoing'. */
+  status?: PublicationStatus;
   createdAt: string;
 }
 
@@ -87,6 +97,10 @@ export interface Comment {
   authorName?: string;
   body: string;
   createdAt: string;
+  /** Net vote score (upvotes − downvotes); present on publicly-ranked reads. */
+  score?: number;
+  upvotes?: number;
+  downvotes?: number;
 }
 
 /**

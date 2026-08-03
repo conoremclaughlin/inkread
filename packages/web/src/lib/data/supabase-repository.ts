@@ -2,10 +2,12 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type {
   Annotation,
   AnnotationKind,
+  BookVisibility,
   Chapter,
   ChapterRecording,
   Comment,
   HighlightColor,
+  PublicationStatus,
   ReadingPosition,
   Speaker,
   VoiceCast,
@@ -34,6 +36,8 @@ interface BookRow {
   language: string;
   source: string;
   chapter_count: number;
+  visibility: string;
+  status: string;
   created_at: string;
   updated_at: string;
 }
@@ -59,6 +63,8 @@ function rowToBook(row: BookRow): BookSummary {
     author: row.author ?? undefined,
     language: row.language,
     source: row.source as BookSummary['source'],
+    visibility: (row.visibility as BookVisibility) ?? 'private',
+    status: (row.status as PublicationStatus) ?? 'ongoing',
     chapterCount: row.chapter_count,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -150,9 +156,13 @@ export class SupabaseLibraryRepository implements LibraryRepository {
   }
 
   async listBooks(): Promise<BookSummary[]> {
+    // Scope to the owner explicitly: books now carry a public-read RLS policy
+    // (for the discovery site), so relying on RLS alone would surface everyone
+    // else's published books in this personal library.
     const { data, error } = await this.supabase
       .from('books')
       .select('*')
+      .eq('user_id', this.userId)
       .order('created_at', { ascending: false });
     if (error) this.fail('listBooks', error);
     return (data as BookRow[]).map(rowToBook);
@@ -412,6 +422,58 @@ export class SupabaseLibraryRepository implements LibraryRepository {
     // RLS enforces author-only deletion.
     const { error } = await this.supabase.from('comments').delete().eq('id', commentId);
     if (error) this.fail('deleteComment', error);
+  }
+
+  async voteOnComment(commentId: string, value: 1 | -1 | 0): Promise<void> {
+    // A trigger keeps comments.up_count/down_count (and the generated score) in
+    // step; RLS allows a vote only on a comment the user can actually see.
+    if (value === 0) {
+      const { error } = await this.supabase
+        .from('comment_votes')
+        .delete()
+        .eq('comment_id', commentId)
+        .eq('user_id', this.userId);
+      if (error) this.fail('voteOnComment(clear)', error);
+      return;
+    }
+    const { error } = await this.supabase.from('comment_votes').upsert(
+      { comment_id: commentId, user_id: this.userId, value },
+      { onConflict: 'comment_id,user_id' },
+    );
+    if (error) this.fail('voteOnComment', error);
+  }
+
+  async listMyVotes(commentIds: string[]): Promise<Record<string, 1 | -1>> {
+    if (commentIds.length === 0) return {};
+    const { data, error } = await this.supabase
+      .from('comment_votes')
+      .select('comment_id, value')
+      .eq('user_id', this.userId)
+      .in('comment_id', commentIds);
+    if (error) this.fail('listMyVotes', error);
+    const votes: Record<string, 1 | -1> = {};
+    for (const row of data as { comment_id: string; value: number }[]) {
+      votes[row.comment_id] = row.value === 1 ? 1 : -1;
+    }
+    return votes;
+  }
+
+  async setBookPublication(
+    bookId: string,
+    patch: { visibility?: BookVisibility; status?: PublicationStatus },
+  ): Promise<BookSummary> {
+    // RLS: only the book owner may update.
+    const update: Record<string, string> = {};
+    if (patch.visibility) update.visibility = patch.visibility;
+    if (patch.status) update.status = patch.status;
+    const { data, error } = await this.supabase
+      .from('books')
+      .update(update)
+      .eq('id', bookId)
+      .select()
+      .single();
+    if (error) this.fail('setBookPublication', error);
+    return rowToBook(data as BookRow);
   }
 
   async getVoiceCast(bookId: string): Promise<VoiceCast | undefined> {

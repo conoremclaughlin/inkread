@@ -36,6 +36,7 @@ export {
   type AttributedSegment,
   type AttributedSentence,
 } from './voices/cast';
+export { isActivelyPublished, rankByScore, type Rankable } from './social/publishing';
 export { splitSentences, type Sentence } from './tts/sentences';
 export { encodeWav, pcmDurationSeconds } from './audio/wav';
 export { textToChapters, type TextToChaptersOptions } from './text/segment';

@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { SupabaseLibraryRepository } from './supabase-repository';
+import { getPublicSeries, listActiveSeries } from './public';
 
 /**
  * Integration test against the local Supabase stack: real Postgres, real
@@ -274,6 +275,68 @@ describe.skipIf(!up)('SupabaseLibraryRepository (integration)', () => {
     // The author can delete their own comment.
     await repository.deleteComment(comment.id);
     expect(await repository.listComments(book.id, 0)).toHaveLength(0);
+
+    await repository.deleteBook(book.id);
+  });
+
+  it('publishes a book, tallies comment votes, and exposes it to the public anon reads', async () => {
+    const book = await repository.createBook({
+      title: 'Serial X',
+      source: 'text',
+      chapters: [{ title: 'One', paragraphs: ['A chapter to discuss.'] }],
+    });
+
+    // Private → invisible to the anon (public) read path.
+    expect(await getPublicSeries(book.id)).toBeUndefined();
+
+    await repository.setBookPublication(book.id, { visibility: 'public', status: 'ongoing' });
+    expect((await listActiveSeries()).map((s) => s.id)).toContain(book.id);
+
+    const comment = await repository.createComment({
+      bookId: book.id,
+      chapterIndex: 0,
+      body: 'Great opener.',
+    });
+
+    // A second reader votes on the public comment.
+    const otherEmail = `repo-test-vote-${Math.random().toString(36).slice(2, 10)}@inkread.test`;
+    const { data: other, error } = await admin.auth.admin.createUser({
+      email: otherEmail,
+      password: 'integration-test-pw',
+      email_confirm: true,
+    });
+    if (error) throw error;
+    try {
+      const otherClient = createClient(SUPABASE_URL, PUBLISHABLE_KEY, {
+        auth: { persistSession: false },
+      });
+      await otherClient.auth.signInWithPassword({
+        email: otherEmail,
+        password: 'integration-test-pw',
+      });
+      const otherRepo = new SupabaseLibraryRepository(otherClient, other.user.id);
+
+      // Two upvotes → score 2 (trigger keeps the denormalized tallies in step).
+      await repository.voteOnComment(comment.id, 1);
+      await otherRepo.voteOnComment(comment.id, 1);
+      let detail = await getPublicSeries(book.id);
+      expect(detail?.comments[0]).toMatchObject({ score: 2, upvotes: 2, downvotes: 0 });
+      expect(await repository.listMyVotes([comment.id])).toEqual({ [comment.id]: 1 });
+
+      // Owner switches to a downvote → up 1, down 1, score 0.
+      await repository.voteOnComment(comment.id, -1);
+      expect((await repository.listMyVotes([comment.id]))[comment.id]).toBe(-1);
+      detail = await getPublicSeries(book.id);
+      expect(detail?.comments[0]).toMatchObject({ score: 0, upvotes: 1, downvotes: 1 });
+
+      // Owner clears their vote → only the reader's upvote remains, score 1.
+      await repository.voteOnComment(comment.id, 0);
+      expect(await repository.listMyVotes([comment.id])).toEqual({});
+      detail = await getPublicSeries(book.id);
+      expect(detail?.comments[0]).toMatchObject({ score: 1, upvotes: 1, downvotes: 0 });
+    } finally {
+      await admin.auth.admin.deleteUser(other.user.id);
+    }
 
     await repository.deleteBook(book.id);
   });
