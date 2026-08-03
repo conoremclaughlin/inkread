@@ -13,7 +13,8 @@ import {
   View,
   type ViewStyle,
 } from 'react-native';
-import { StatusBar } from 'expo-status-bar';
+import { setStatusBarStyle, type StatusBarStyle } from 'expo-status-bar';
+import { useFocusEffect } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 import {
@@ -329,6 +330,30 @@ function ReaderInner({
 
   const insets = useSafeAreaInsets();
   const panel = useMemo(() => panelFor(theme), [theme]);
+
+  // Keep the iOS status-bar icons (clock, signal, battery) legible against the
+  // reader theme. This app sets UIViewControllerBasedStatusBarAppearance = NO,
+  // so the status bar is driven by the app-level API rather than per-screen —
+  // and the reader is a full-screen modal — which makes the declarative
+  // <StatusBar> unreliable across the present/dismiss transition. Drive it
+  // imperatively: light icons on a dark theme, dark icons on a light one.
+  const statusStyle: StatusBarStyle = panel.dark ? 'light' : 'dark';
+  // Follow theme changes while the reader is on screen (no flicker: the focus
+  // effect below has empty deps, so only this runs on a theme switch).
+  useEffect(() => {
+    setStatusBarStyle(statusStyle, true);
+  }, [statusStyle]);
+  // Re-assert on every focus (entering the reader, or returning from Notes),
+  // reading the current theme via a ref; restore the app's default dark icons
+  // for the always-light rest of the app when the reader loses focus.
+  const statusStyleRef = useRef<StatusBarStyle>(statusStyle);
+  statusStyleRef.current = statusStyle;
+  useFocusEffect(
+    useCallback(() => {
+      setStatusBarStyle(statusStyleRef.current, true);
+      return () => setStatusBarStyle('dark', true);
+    }, []),
+  );
   // Theme-reactive chrome + safe-area padding, applied over the layout styles.
   const dyn = useMemo(
     () => ({
@@ -844,7 +869,8 @@ function ReaderInner({
 
   return (
     <View style={[styles.screen, { backgroundColor: panel.bg }]}>
-      <StatusBar style={panel.dark ? 'light' : 'dark'} />
+      {/* Status-bar style is driven imperatively above (setStatusBarStyle),
+          which survives the modal present/dismiss transition reliably. */}
       {/* Reserve room for the Listen transport so it lifts the text off the
           bottom instead of covering the final lines. The chapter-nav bar stays
           an overlay — it's transient chrome that fades, not a persistent panel. */}
