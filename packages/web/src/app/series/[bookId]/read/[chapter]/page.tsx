@@ -5,6 +5,8 @@ import { createClient } from '@/lib/supabase/server';
 import { getRepository } from '@/lib/data';
 import { getPublicChapter, getPublicSeries } from '@/lib/data/public';
 import { ReaderPaywall } from '@/components/ReaderPaywall';
+import { CommentsBoard } from '@/components/CommentsBoard';
+import { CommentComposer } from '@/components/CommentComposer';
 
 type Params = { params: Promise<{ bookId: string; chapter: string }> };
 
@@ -24,6 +26,9 @@ export default async function SeriesReadPage({ params }: Params) {
   if (!detail) notFound();
   const { series } = detail;
   if (index >= series.chapterCount) notFound();
+
+  // This chapter's slice of the (already score-ranked) discussion.
+  const chapterComments = detail.comments.filter((c) => c.chapterIndex === index);
 
   const supabase = await createClient();
   let signedIn = false;
@@ -141,6 +146,23 @@ export default async function SeriesReadPage({ params }: Params) {
             <span className="text-[#a49a8b]">The End · more to come</span>
           )}
         </nav>
+
+        {/* Chapter discussion — only on chapters the reader can actually read, so
+            locked chapters never leak spoilers through the comments. */}
+        {!read.locked ? (
+          <section className="mt-12 border-t border-[#ece4d7] pt-8">
+            <h2 className="mb-4 font-serif text-xl text-[#26221c]">
+              Discussion
+              {chapterComments.length > 0 ? (
+                <span className="ml-2 text-base font-normal text-[#a49a8b]">
+                  {chapterComments.length}
+                </span>
+              ) : null}
+            </h2>
+            <CommentComposer bookId={bookId} chapterIndex={index} signedIn={signedIn} />
+            <CommentsBoard comments={chapterComments} signedIn={signedIn} />
+          </section>
+        ) : null}
       </main>
     </div>
   );
