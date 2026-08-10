@@ -72,15 +72,33 @@ export default async function HomePage() {
             Browse serials as their chapters arrive, listen with natural voices, and read along with
             a community in the margins.
           </p>
+          <form
+            action="/browse"
+            method="get"
+            className="mx-auto mt-7 flex max-w-md gap-2"
+          >
+            <input
+              type="search"
+              name="q"
+              placeholder="Search serials by title or author…"
+              className="min-w-0 flex-1 rounded-full border border-[#e6dfd4] bg-white px-5 py-2.5 text-[15px] text-[#332e26] outline-none transition focus:border-[#8b5e3c]"
+            />
+            <button
+              type="submit"
+              className="shrink-0 rounded-full bg-[#8b5e3c] px-5 py-2.5 text-sm font-medium text-white transition hover:bg-[#7a5133]"
+            >
+              Search
+            </button>
+          </form>
         </section>
 
         {/* Actively publishing */}
         <section className="py-12">
           <div className="mb-6 flex items-baseline justify-between">
             <h2 className="font-serif text-2xl text-[#26221c]">Actively publishing</h2>
-            <span className="text-sm text-[#8a8175]">
-              {series.length} {series.length === 1 ? 'series' : 'series'}
-            </span>
+            <Link href="/browse" className="text-sm font-medium text-[#8b5e3c] transition hover:text-[#7a5133]">
+              Browse all →
+            </Link>
           </div>
           {series.length === 0 ? (
             <div className="rounded-2xl border border-dashed border-[#e0d8ca] bg-[#fbf8f2] px-6 py-16 text-center">

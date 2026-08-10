@@ -3,7 +3,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 
 // Auth pages + the public discovery surface (home and series pages) are open to
 // everyone; the personal library and reader still require a session.
-const PUBLIC_PATHS = ['/login', '/signup', '/auth', '/series'];
+const PUBLIC_PATHS = ['/login', '/signup', '/auth', '/series', '/browse'];
 
 /**
  * Refreshes session tokens on every request and gates the app: the public

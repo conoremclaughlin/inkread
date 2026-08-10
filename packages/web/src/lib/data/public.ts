@@ -120,17 +120,36 @@ async function commentCounts(bookIds: string[]): Promise<Map<string, number>> {
  * Actively-published series for the home grid: public + ongoing, freshest
  * (most recently updated) first.
  */
-export async function listActiveSeries(): Promise<PublicSeries[]> {
-  const { data, error } = await publicClient()
+const SERIES_COLUMNS =
+  'id, title, author, chapter_count, updated_at, status, free_chapter_count, coins_per_chapter';
+
+/**
+ * Public series for discovery, freshest (most-recently-updated) first.
+ * Optionally narrowed by serialization status and/or a title/author search.
+ */
+export async function listPublicSeries(
+  opts: { status?: 'ongoing' | 'completed'; query?: string; limit?: number } = {},
+): Promise<PublicSeries[]> {
+  let request = publicClient()
     .from('books')
-    .select('id, title, author, chapter_count, updated_at, status, free_chapter_count, coins_per_chapter')
+    .select(SERIES_COLUMNS)
     .eq('visibility', 'public')
-    .eq('status', 'ongoing')
     .order('updated_at', { ascending: false });
+  if (opts.status) request = request.eq('status', opts.status);
+  // Sanitize before interpolating into the PostgREST or-filter grammar.
+  const term = opts.query?.trim().replace(/[%,()]/g, ' ').trim();
+  if (term) request = request.or(`title.ilike.%${term}%,author.ilike.%${term}%`);
+  if (opts.limit) request = request.limit(opts.limit);
+  const { data, error } = await request;
   if (error || !data) return [];
   const rows = data as PublicBookRow[];
   const counts = await commentCounts(rows.map((r) => r.id));
   return rows.map((row) => rowToSeries(row, counts.get(row.id) ?? 0));
+}
+
+/** The home grid: actively-published series (public + ongoing). */
+export function listActiveSeries(): Promise<PublicSeries[]> {
+  return listPublicSeries({ status: 'ongoing' });
 }
 
 /**

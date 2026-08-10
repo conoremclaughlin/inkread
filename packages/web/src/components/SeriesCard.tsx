@@ -39,6 +39,17 @@ export function SeriesCard({ series }: { series: PublicSeries }) {
             ? ` · ${series.commentCount} comment${series.commentCount === 1 ? '' : 's'}`
             : ''}
         </p>
+        {series.coinsPerChapter > 0 ? (
+          <p className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-[#b08a5e]">
+            <svg width="11" height="11" viewBox="0 0 12 12" aria-hidden>
+              <circle cx="6" cy="6" r="5" fill="none" stroke="currentColor" strokeWidth="1.3" />
+              <circle cx="6" cy="6" r="2" fill="currentColor" />
+            </svg>
+            {series.freeChapterCount > 0
+              ? `${series.freeChapterCount} free · ${series.coinsPerChapter}/ch`
+              : `${series.coinsPerChapter} coins/ch`}
+          </p>
+        ) : null}
       </div>
     </Link>
   );
