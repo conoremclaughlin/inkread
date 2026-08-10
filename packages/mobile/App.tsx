@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { Pressable, Text } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { StatusBar } from 'expo-status-bar';
@@ -13,6 +14,8 @@ import { LibraryScreen } from './src/screens/LibraryScreen';
 import { LoginScreen } from './src/screens/LoginScreen';
 import { NotesScreen } from './src/screens/NotesScreen';
 import { ReaderScreen } from './src/screens/ReaderScreen';
+import { DiscoverScreen } from './src/screens/DiscoverScreen';
+import { SeriesScreen } from './src/screens/SeriesScreen';
 import { colors } from './src/ui/theme';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -77,7 +80,26 @@ export default function App() {
               animation: 'slide_from_bottom',
             }}
           />
-          <Stack.Screen name="Library" component={LibraryScreen} options={{ title: 'inkread' }} />
+          <Stack.Screen
+            name="Library"
+            component={LibraryScreen}
+            options={({ navigation }) => ({
+              title: 'inkread',
+              headerRight: () => (
+                <Pressable hitSlop={12} onPress={() => navigation.navigate('Discover')}>
+                  <Text style={{ color: colors.accent, fontWeight: '600', fontSize: 15 }}>
+                    Discover
+                  </Text>
+                </Pressable>
+              ),
+            })}
+          />
+          <Stack.Screen name="Discover" component={DiscoverScreen} options={{ title: 'Discover' }} />
+          <Stack.Screen
+            name="Series"
+            component={SeriesScreen}
+            options={({ route }) => ({ title: route.params.title })}
+          />
           <Stack.Screen
             name="Reader"
             component={ReaderScreen}
