@@ -52,7 +52,82 @@ export interface BookMeta {
   visibility?: BookVisibility;
   /** Serialization state of a published work — defaults to 'ongoing'. */
   status?: PublicationStatus;
+  /** Chapters readable without paying — the free head of a serial (default 0). */
+  freeChapterCount?: number;
+  /** Coins to unlock each chapter past the free head; 0 means the whole book is free. */
+  coinsPerChapter?: number;
   createdAt: string;
+}
+
+/**
+ * A reader's coin wallet. Coins are an in-app currency (demo-funded to start);
+ * spending them records a permanent {@link ChapterUnlock}. The balance is the
+ * denormalized running total the ledger below reconstructs.
+ */
+export interface Wallet {
+  balance: number;
+}
+
+/** Why coins moved. Membership grants will extend this set, not replace it. */
+export type CoinLedgerReason =
+  | 'signup_grant'
+  | 'topup'
+  | 'unlock_spend'
+  | 'author_earning'
+  | 'refund'
+  | 'adjustment';
+
+/** One append-only movement of coins, with the balance it left behind. */
+export interface CoinLedgerEntry {
+  id: string;
+  delta: number;
+  reason: CoinLedgerReason;
+  bookId?: string;
+  chapterIndex?: number;
+  balanceAfter: number;
+  createdAt: string;
+}
+
+/**
+ * A permanent per-user entitlement to one chapter. It grants the chapter in any
+ * rendition — reflowable text now, and the same gate frees its TTS / voice-cast
+ * audio later — so a purchase buys the whole multimedia experience, not a format.
+ */
+export interface ChapterUnlock {
+  bookId: string;
+  chapterIndex: number;
+  coinsSpent: number;
+  createdAt: string;
+}
+
+/** Public author/reader identity; the wallet balance lives here too. */
+export interface Profile {
+  userId: string;
+  username?: string;
+  displayName?: string;
+  coinBalance: number;
+  isAuthor: boolean;
+}
+
+/** Result of a purchase (unlock a chapter, or batch-unlock a book). */
+export interface PurchaseResult {
+  /** Chapter indices accessible after the call (newly unlocked or already owned). */
+  unlocked: number[];
+  coinsSpent: number;
+  balance: number;
+}
+
+/**
+ * A chapter delivered through the entitlement gate. `paragraphs` is present only
+ * when the reader is entitled (the free head, the owner, or a recorded unlock);
+ * otherwise the chapter is `locked` and the client shows a paywall at `coinCost`.
+ */
+export interface ReadChapter {
+  chapterIndex: number;
+  title: string;
+  paragraphs?: string[];
+  locked: boolean;
+  coinCost: number;
 }
 
 export type AnnotationKind = 'highlight' | 'note';
