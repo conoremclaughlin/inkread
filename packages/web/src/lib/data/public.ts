@@ -1,4 +1,5 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import type { ReadChapter } from '@inkread/core';
 
 /**
  * Public, unauthenticated reads for the discovery site.
@@ -18,6 +19,9 @@ export interface PublicSeries {
   updatedAt: string;
   status: 'ongoing' | 'completed';
   commentCount: number;
+  /** Chapters free at the start; the rest cost `coinsPerChapter` each. */
+  freeChapterCount: number;
+  coinsPerChapter: number;
 }
 
 export interface PublicComment {
@@ -41,6 +45,8 @@ interface PublicBookRow {
   chapter_count: number;
   updated_at: string;
   status: string;
+  free_chapter_count: number | null;
+  coins_per_chapter: number | null;
 }
 
 interface PublicCommentRow {
@@ -76,6 +82,8 @@ function rowToSeries(row: PublicBookRow, commentCount: number): PublicSeries {
     updatedAt: row.updated_at,
     status: row.status === 'completed' ? 'completed' : 'ongoing',
     commentCount,
+    freeChapterCount: row.free_chapter_count ?? 0,
+    coinsPerChapter: row.coins_per_chapter ?? 0,
   };
 }
 
@@ -115,7 +123,7 @@ async function commentCounts(bookIds: string[]): Promise<Map<string, number>> {
 export async function listActiveSeries(): Promise<PublicSeries[]> {
   const { data, error } = await publicClient()
     .from('books')
-    .select('id, title, author, chapter_count, updated_at, status')
+    .select('id, title, author, chapter_count, updated_at, status, free_chapter_count, coins_per_chapter')
     .eq('visibility', 'public')
     .eq('status', 'ongoing')
     .order('updated_at', { ascending: false });
@@ -162,7 +170,7 @@ export async function getPublicSeries(bookId: string): Promise<PublicSeriesDetai
   const client = publicClient();
   const { data: bookData, error } = await client
     .from('books')
-    .select('id, title, author, chapter_count, updated_at, status')
+    .select('id, title, author, chapter_count, updated_at, status, free_chapter_count, coins_per_chapter')
     .eq('id', bookId)
     .eq('visibility', 'public')
     .maybeSingle();
@@ -170,7 +178,9 @@ export async function getPublicSeries(bookId: string): Promise<PublicSeriesDetai
   const book = bookData as PublicBookRow;
 
   const [{ data: chapterData }, { data: commentData }] = await Promise.all([
-    client.from('chapters').select('chapter_index, title').eq('book_id', bookId).order('chapter_index'),
+    // The full TOC (index + title for free AND paid chapters) comes via a
+    // definer RPC — the chapters table itself only exposes free-chapter rows.
+    client.rpc('public_series_toc', { p_book_id: bookId }),
     client
       .from('comments')
       .select('id, book_id, chapter_index, author_name, body, created_at, score, up_count, down_count')
@@ -188,4 +198,36 @@ export async function getPublicSeries(bookId: string): Promise<PublicSeriesDetai
   );
 
   return { series: rowToSeries(book, comments.length), chapters, comments };
+}
+
+interface ReadChapterRow {
+  chapter_index: number;
+  title: string;
+  paragraphs: string[] | null;
+  locked: boolean;
+  coin_cost: number;
+}
+
+/**
+ * A single chapter for an anonymous visitor, through the entitlement gate. With
+ * no session, only the free head returns a body; paid chapters come back
+ * `locked` (the client then prompts sign-in to unlock). A signed-in reader gets
+ * their unlocks honored via the authenticated repository's `readChapter`.
+ */
+export async function getPublicChapter(
+  bookId: string,
+  chapterIndex: number,
+): Promise<ReadChapter | undefined> {
+  const { data, error } = await publicClient()
+    .rpc('read_public_chapter', { p_book_id: bookId, p_chapter_index: chapterIndex })
+    .maybeSingle();
+  if (error || !data) return undefined;
+  const row = data as ReadChapterRow;
+  return {
+    chapterIndex: row.chapter_index,
+    title: row.title,
+    paragraphs: row.paragraphs ?? undefined,
+    locked: row.locked,
+    coinCost: row.coin_cost,
+  };
 }

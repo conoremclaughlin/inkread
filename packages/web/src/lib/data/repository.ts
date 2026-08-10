@@ -6,8 +6,11 @@ import type {
   ChapterRecording,
   Comment,
   PublicationStatus,
+  PurchaseResult,
+  ReadChapter,
   ReadingPosition,
   VoiceCast,
+  Wallet,
 } from '@inkread/core';
 
 /**
@@ -101,11 +104,38 @@ export interface LibraryRepository {
   /** The current user's own vote on each given comment (their rows only). */
   listMyVotes(commentIds: string[]): Promise<Record<string, 1 | -1>>;
 
-  /** Owner-only: publish/unpublish a book and set its serialization status. */
+  /**
+   * Owner-only: publish/unpublish a book, set its serialization status, and set
+   * its pricing policy (free head + per-chapter coin price). All fields optional.
+   */
   setBookPublication(
     bookId: string,
-    patch: { visibility?: BookVisibility; status?: PublicationStatus },
+    patch: {
+      visibility?: BookVisibility;
+      status?: PublicationStatus;
+      freeChapterCount?: number;
+      coinsPerChapter?: number;
+    },
   ): Promise<BookSummary>;
+
+  // --- Coins & entitlements ---------------------------------------------------
+
+  /** The signed-in reader's coin wallet balance. */
+  getWallet(): Promise<Wallet>;
+  /** Add demo coins to the wallet (no real charge); returns the new balance. */
+  topUpDemo(amount: number): Promise<number>;
+  /** Chapter indices the reader has already unlocked for a book. */
+  listMyUnlocks(bookId: string): Promise<number[]>;
+  /** Buy a single chapter. Idempotent — a free/owned chapter costs nothing. */
+  unlockChapter(bookId: string, chapterIndex: number): Promise<PurchaseResult>;
+  /** Buy every still-locked paid chapter of a book at once (batch unlock). */
+  unlockBook(bookId: string): Promise<PurchaseResult>;
+  /**
+   * Read a chapter through the entitlement gate. `paragraphs` is present only
+   * when entitled (owner, free head, or unlocked); otherwise it comes back
+   * `locked` with the coin cost so the caller can render a paywall.
+   */
+  readChapter(bookId: string, chapterIndex: number): Promise<ReadChapter | undefined>;
 
   /** The book's multi-voice cast, or undefined if none has been set up. */
   getVoiceCast(bookId: string): Promise<VoiceCast | undefined>;
