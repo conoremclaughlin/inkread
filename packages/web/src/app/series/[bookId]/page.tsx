@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
+import { chapterCoinCost } from '@inkread/core';
 import { createClient } from '@/lib/supabase/server';
 import { getPublicSeries } from '@/lib/data/public';
 import { CommentsBoard } from '@/components/CommentsBoard';
@@ -14,6 +15,11 @@ export default async function SeriesPage({ params }: Params) {
   const detail = await getPublicSeries(bookId);
   if (!detail) notFound();
   const { series, chapters, comments } = detail;
+  const pricing = {
+    freeChapterCount: series.freeChapterCount,
+    coinsPerChapter: series.coinsPerChapter,
+  };
+  const isPaid = series.coinsPerChapter > 0;
 
   let signedIn = false;
   try {
@@ -65,8 +71,16 @@ export default async function SeriesPage({ params }: Params) {
               {relativeTime(series.updatedAt)} · {series.commentCount} comment
               {series.commentCount === 1 ? '' : 's'}
             </p>
+            {isPaid ? (
+              <p className="mt-2 inline-flex items-center gap-1.5 text-sm text-[#8b5e3c]">
+                <CoinGlyph />
+                {series.freeChapterCount > 0
+                  ? `First ${series.freeChapterCount} chapter${series.freeChapterCount === 1 ? '' : 's'} free · then ${series.coinsPerChapter} coins each`
+                  : `${series.coinsPerChapter} coins per chapter`}
+              </p>
+            ) : null}
             <Link
-              href={`/read/${series.id}`}
+              href={`/series/${series.id}/read/0`}
               className="mt-5 inline-block rounded-full bg-[#8b5e3c] px-5 py-2.5 text-sm font-medium text-white transition hover:bg-[#7a5133]"
             >
               Start reading
@@ -91,19 +105,30 @@ export default async function SeriesPage({ params }: Params) {
                   : 'space-y-1'
               }
             >
-              {chapters.map((chapter) => (
-                <li key={chapter.index}>
-                  <Link
-                    href={`/read/${series.id}`}
-                    className="flex items-baseline gap-3 rounded-lg px-3 py-2 transition hover:bg-white"
-                  >
-                    <span className="w-8 shrink-0 text-right text-sm tabular-nums text-[#a49a8b]">
-                      {chapter.index + 1}
-                    </span>
-                    <span className="text-[#332e26]">{chapter.title}</span>
-                  </Link>
-                </li>
-              ))}
+              {chapters.map((chapter) => {
+                const cost = chapterCoinCost(pricing, chapter.index);
+                return (
+                  <li key={chapter.index}>
+                    <Link
+                      href={`/series/${series.id}/read/${chapter.index}`}
+                      className="flex items-baseline gap-3 rounded-lg px-3 py-2 transition hover:bg-white"
+                    >
+                      <span className="w-8 shrink-0 text-right text-sm tabular-nums text-[#a49a8b]">
+                        {chapter.index + 1}
+                      </span>
+                      <span className="min-w-0 flex-1 truncate text-[#332e26]">{chapter.title}</span>
+                      {cost > 0 ? (
+                        <span className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-[#b08a5e]">
+                          <CoinGlyph />
+                          {cost}
+                        </span>
+                      ) : (
+                        <span className="shrink-0 text-xs text-[#b8ae9e]">Free</span>
+                      )}
+                    </Link>
+                  </li>
+                );
+              })}
             </ol>
           )}
         </section>
@@ -119,5 +144,15 @@ export default async function SeriesPage({ params }: Params) {
         </section>
       </main>
     </div>
+  );
+}
+
+/** A small coin mark for prices and lock badges. */
+function CoinGlyph() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden className="inline-block">
+      <circle cx="6" cy="6" r="5" fill="none" stroke="currentColor" strokeWidth="1.3" />
+      <circle cx="6" cy="6" r="2" fill="currentColor" />
+    </svg>
   );
 }
