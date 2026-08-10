@@ -73,6 +73,8 @@ export default async function LibraryPage() {
                   bookId={book.id}
                   visibility={book.visibility ?? 'private'}
                   status={book.status ?? 'ongoing'}
+                  freeChapterCount={book.freeChapterCount ?? 0}
+                  coinsPerChapter={book.coinsPerChapter ?? 0}
                 />
                 <Link
                   href={`/notes/${book.id}`}
