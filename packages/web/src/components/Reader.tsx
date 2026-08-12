@@ -19,6 +19,7 @@ import { KokoroTtsController, KOKORO_DEFAULT_VOICE } from '@/lib/tts/kokoro';
 import { KOKORO_VOICES } from '@/lib/tts/voices';
 import { useIsElectron } from '@/lib/useIsElectron';
 import { CommentsDrawer } from '@/components/CommentsDrawer';
+import { createLibrarySource } from '@/components/reader/source';
 
 type TtsPlayer = WebTtsController | KokoroTtsController;
 type TtsEngine = 'kokoro' | 'system';
@@ -98,8 +99,12 @@ export function Reader({
   offline,
   currentUserId,
 }: ReaderProps) {
+  // The reader reads through a ChapterSource seam. Today the owner path wraps
+  // the in-memory book (peek resolves synchronously, so behavior is identical);
+  // a lazy, entitlement-gated public source slots in behind the same interface.
+  const source = useMemo(() => createLibrarySource(chapters), [chapters]);
   const [chapterIndex, setChapterIndex] = useState(
-    Math.min(initialPosition?.chapterIndex ?? 0, chapters.length - 1),
+    Math.min(initialPosition?.chapterIndex ?? 0, source.count - 1),
   );
   const [commentsOpen, setCommentsOpen] = useState(false);
   const [themeMode, setThemeMode] = useState<'fixed' | 'auto'>(
@@ -211,15 +216,21 @@ export function Reader({
   const [ttsProgress, setTtsProgress] = useState<number>();
   const saveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
-  const chapter = chapters[chapterIndex];
-  const chapterText = useMemo(() => chapter?.paragraphs.join('\n') ?? '', [chapter]);
+  const chapter = source.peek(chapterIndex);
+  const chapterText = useMemo(() => chapter?.paragraphs?.join('\n') ?? '', [chapter]);
   const chapterAnnotations = useMemo(
     () => annotations.filter((a) => a.locator.chapterIndex === chapterIndex),
     [annotations, chapterIndex],
   );
   const html = useMemo(
     () =>
-      chapter ? buildReaderHtml(chapter, chapterAnnotations, { theme, fontSize, pagination }) : '',
+      chapter && chapter.paragraphs && !chapter.locked
+        ? buildReaderHtml(
+            { title: chapter.title, paragraphs: chapter.paragraphs },
+            chapterAnnotations,
+            { theme, fontSize, pagination },
+          )
+        : '',
     [chapter, chapterAnnotations, theme, fontSize, pagination],
   );
 
@@ -247,7 +258,7 @@ export function Reader({
           if (ttsAdvancingRef.current) return;
           ttsAdvancingRef.current = true;
           setChapterIndex((index) => {
-            if (index + 1 >= chapters.length) {
+            if (index + 1 >= source.count) {
               ttsAdvancingRef.current = false;
               return index;
             }
@@ -258,7 +269,7 @@ export function Reader({
         }
       });
     },
-    [bridge, chapters.length],
+    [bridge, source.count],
   );
 
   // Sentence transport that also crosses chapter boundaries: at the last line
@@ -270,14 +281,14 @@ export function Reader({
     if (!tts) return;
     const { sentenceIndex, totalSentences, playing } = tts.status;
     if (totalSentences > 0 && sentenceIndex >= totalSentences - 1) {
-      if (chapterIndex + 1 >= chapters.length) return;
+      if (chapterIndex + 1 >= source.count) return;
       ttsContinueRef.current = playing;
       offsetRef.current = 0;
       setChapterIndex(chapterIndex + 1);
     } else {
       tts.next();
     }
-  }, [chapterIndex, chapters.length]);
+  }, [chapterIndex, source.count]);
 
   const ttsPrev = useCallback(() => {
     const tts = ttsRef.current;
@@ -471,7 +482,7 @@ export function Reader({
         }
         case 'pageEdge':
           setChapterIndex((index) => {
-            if (msg.dir === 'next' && index + 1 < chapters.length) {
+            if (msg.dir === 'next' && index + 1 < source.count) {
               offsetRef.current = 0;
               return index + 1;
             }
@@ -491,7 +502,7 @@ export function Reader({
     };
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
-  }, [annotations, bridge, chapters.length, reloadAnnotations, savePosition]);
+  }, [annotations, bridge, source.count, reloadAnnotations, savePosition]);
 
   // Tear down whichever TTS engine is live when leaving the reader.
   useEffect(() => {
@@ -791,7 +802,7 @@ export function Reader({
                 ↩ Go to where I left off
               </button>
             ) : null}
-            {chapters.map((c, i) => {
+            {source.titles.map((title, i) => {
               const current = i === chapterIndex;
               return (
                 <button
@@ -802,7 +813,7 @@ export function Reader({
                     current ? 'bg-[var(--panel-hover)] font-bold text-[var(--panel-accent)]' : ''
                   }`}
                 >
-                  {c.title}
+                  {title}
                 </button>
               );
             })}
@@ -1317,7 +1328,7 @@ export function Reader({
           onClick={goToFurthest}
           className="absolute bottom-14 right-6 z-10 rounded-full bg-[var(--panel-bg)] px-4 py-2 text-xs font-semibold text-[var(--panel-accent)] shadow-lg ring-1 ring-[var(--panel-border)] transition hover:bg-[var(--panel-accent-soft)]"
         >
-          Resume at {chapters[furthest.chapterIndex]?.title ?? 'furthest point'} →
+          Resume at {source.titles[furthest.chapterIndex] ?? 'furthest point'} →
         </button>
       ) : null}
 
@@ -1332,10 +1343,10 @@ export function Reader({
           ‹ Prev
         </button>
         <span className="flex items-center truncate text-xs opacity-50">
-          {chapterIndex + 1} / {chapters.length} · {chapter.title}
+          {chapterIndex + 1} / {source.count} · {chapter.title}
         </span>
         <button
-          disabled={pagination === 'scroll' && chapterIndex >= chapters.length - 1}
+          disabled={pagination === 'scroll' && chapterIndex >= source.count - 1}
           onClick={() =>
             pagination === 'paged' ? bridge()?.turnPage(1) : goToChapter(chapterIndex + 1)
           }
