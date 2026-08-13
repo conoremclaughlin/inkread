@@ -23,6 +23,10 @@ export function PublishControl({
 }) {
   const [visibility, setVisibility] = useState<BookVisibility>(initialVisibility);
   const [status, setStatus] = useState<PublicationStatus>(initialStatus);
+  // Pricing lives in state (not the props) so the label updates after a save —
+  // the page is a server component, so the props never refresh in place.
+  const [freeCount, setFreeCount] = useState(initialFree);
+  const [coinPrice, setCoinPrice] = useState(initialPrice);
   const [busy, setBusy] = useState(false);
   const [pricingOpen, setPricingOpen] = useState(false);
 
@@ -67,7 +71,7 @@ export function PublishControl({
               className="rounded-full border border-[#e6dfd4] px-2.5 py-1 text-xs font-medium text-[#8b5e3c] transition hover:bg-[#f3ead9] disabled:opacity-50"
               title="Set the free chapters and per-chapter price"
             >
-              {initialPrice > 0 ? `${initialPrice} coins/ch` : 'Free · price it'}
+              {coinPrice > 0 ? `${coinPrice} coins/ch` : 'Free · price it'}
             </button>
             <button
               type="button"
@@ -98,11 +102,15 @@ export function PublishControl({
       {isPublic && pricingOpen ? (
         <PricingEditor
           busy={busy}
-          initialFree={initialFree}
-          initialPrice={initialPrice}
+          initialFree={freeCount}
+          initialPrice={coinPrice}
           onSave={async (freeChapterCount, coinsPerChapter) => {
             const ok = await patch({ freeChapterCount, coinsPerChapter });
-            if (ok) setPricingOpen(false);
+            if (ok) {
+              setFreeCount(freeChapterCount);
+              setCoinPrice(coinsPerChapter);
+              setPricingOpen(false);
+            }
             return ok;
           }}
         />
