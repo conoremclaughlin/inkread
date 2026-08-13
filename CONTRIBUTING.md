@@ -48,6 +48,25 @@ git checkout -b cm/feat/listing-page
 git checkout -b wren/fix/search-pagination
 ```
 
+#### Integration branches
+
+A long-running initiative that needs a stable base for many PRs before landing in `main` gets an **integration branch**:
+
+```
+release/<feat|standards>/<description>
+   │            │              │
+   │            │              └─⫸ Kebab-case. The initiative, not a task.
+   │            │
+   │            └─⫸ feat (product initiative) or standards (repo-wide conventions/tooling)
+   │
+   └─⫸ Reserved prefix. Never a moniker — integration branches are shared, not personal.
+```
+
+Examples: `release/feat/ios-port`, `release/standards/lint-flat-config`.
+
+- PRs for the initiative target its `release/*` branch; the release branch lands in `main` via its own PR when the initiative is ready.
+- Personal branches keep the `<moniker>/<type>/<scope>` form above — the prefix tells you at a glance whether a branch is someone's working copy or a shared trunk.
+
 When syncing with main: rebase first; if conflicts get messy, merge main in and move on.
 
 **Never set your upstream to `origin/main` from a non-main branch.** When pushing a feature branch, use `git push -u origin <your-branch-name>`.
