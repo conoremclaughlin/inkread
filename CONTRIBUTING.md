@@ -66,6 +66,7 @@ Examples: `release/feat/ios-port`, `release/refactor/native-reader`.
 
 - PRs for the initiative target its `release/*` branch; the release branch lands in `main` via its own PR when the initiative is ready.
 - Personal branches keep the `<moniker>/<type>/<scope>` form above — the prefix tells you at a glance whether a branch is someone's working copy or a shared trunk.
+- Integration branches should be **rare**: a long arc owned by one engineer stays on their moniker branch, PRs and all. Reach for `release/*` only when several contributors genuinely need one stable shared base.
 
 When syncing with main: rebase first; if conflicts get messy, merge main in and move on.
 
