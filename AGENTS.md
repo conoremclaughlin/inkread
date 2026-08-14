@@ -50,9 +50,11 @@ Throughout the session, use `update_session_phase` for structural status changes
 
 This is a yarn workspaces monorepo:
 
-- **`packages/core`** — pure TypeScript domain logic: PDF-text → chapter segmentation, EPUB 3 builder, reader HTML (shared by mobile and web), annotation models, Markdown/Notion export. Fully unit-tested in Node with vitest.
-- **`packages/mobile`** — Expo (React Native) iOS app. Uses `@inkread/core` for all conversion/export logic. PDF text extraction runs in a hidden WebView with a bundled pdf.js; TTS via `expo-speech`; storage via `expo-sqlite` + `expo-file-system` (local-first).
-- **`packages/web`** — Next.js 16 e-reader + the API. Supabase cookie-session auth (`@supabase/ssr`), route handlers behind a `LibraryRepository` interface (never query the provider directly), in-browser pdf.js import, iframe reader sharing core's HTML, `speechSynthesis` listen mode. Local Supabase at ports 545xx (`supabase start`); web dev server on 6021.
+- **`packages/core`** — pure TypeScript domain logic: PDF-text → chapter segmentation, EPUB 3 builder, the reader's shared model (run segmentation, pagination, palette), annotation models, Markdown/Notion export. Fully unit-tested in Node with vitest.
+- **`packages/mobile`** — Expo (React Native) iOS app. Uses `@inkread/core` for all conversion/export logic. The reader is pure React Native (native text selection → chapter offsets); PDF text extraction runs in a hidden WebView with a bundled pdf.js; TTS via `expo-speech`; storage via `expo-sqlite` + `expo-file-system` (local-first).
+- **`packages/web`** — Next.js 16 e-reader + the API. Supabase cookie-session auth (`@supabase/ssr`), route handlers behind a `LibraryRepository` interface (never query the provider directly), in-browser pdf.js import, a React reader rendering real DOM, `speechSynthesis`/Kokoro listen mode. Local Supabase at ports 545xx (`supabase start`); web dev server on 6021.
+
+**The reader** is one view per platform over shared logic. Both render the same offset model — a chapter's plain text is `paragraphs.join('\n')`, every annotation locator is a `[start, end)` range in it, and `segmentChapterRuns` splits paragraphs at annotation boundaries — so a highlight lands on identical characters everywhere. Web has a single `Reader` component over a `ChapterSource`: the owner's library (in memory) and a published series (lazy, entitlement-gated, paywalled) are the same view with different data.
 - **`packages/desktop`** — Electron shell around the web app (`yarn desktop`, points at `APP_URL`, default http://127.0.0.1:6021). Session cookies persist, so it behaves like a signed-in native app.
 
 ## Architecture
@@ -65,13 +67,19 @@ packages/
       pdf/           # PDF text → structured chapters (segmentation heuristics)
       epub/          # EPUB 3 assembly (fflate zip, OPF/nav generation)
       export/        # Annotations → Markdown / share text
+      reader/        # Shared reader model: run segmentation, pagination, palette
   mobile/
     src/
-      screens/       # Library, Reader, Book detail, Notes
-      reader/        # WebView reader HTML/JS bridge (selection, highlights, pagination)
+      screens/       # Library, Reader, Discover, Series, Book detail, Notes
+      components/    # NativeReaderView / NativePagedView (pure-RN reader) + chrome
       tts/           # Sentence-queue TTS controller over expo-speech
       pdf/           # pdf.js WebView extractor bridge
       store/         # SQLite persistence + file storage
+  web/
+    src/
+      components/
+        reader/      # ChapterView (DOM renderer), ChapterSource, offset/page maths
+    e2e/             # Playwright specs against the local stack
 ```
 
 Design rule: anything that can be pure TypeScript lives in `core` where it is testable in Node. `mobile` owns only UI, native APIs, and glue.
@@ -94,8 +102,9 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) for the full reference on coding style,
 ```bash
 # Root
 yarn install          # Install all workspaces
-yarn test             # Run all tests (core: vitest)
+yarn test             # Run all unit + integration tests (vitest)
 yarn type-check       # Type-check all packages
+yarn workspace @inkread/web e2e   # Playwright e2e (needs supabase start; skips without it)
 yarn ios              # Build + run the iOS app on a simulator
 yarn dev              # Start the Expo dev server
 supabase start        # Local Postgres/auth stack (ports 545xx)
