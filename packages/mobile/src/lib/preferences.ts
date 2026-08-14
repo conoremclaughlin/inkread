@@ -13,6 +13,13 @@ export interface ReaderPreferences {
   ttsVoice?: string;
   /** Set once the user has seen the "download better voices" nudge. */
   voicePromptSeen?: boolean;
+  /**
+   * Which reader renders the page. 'webview' (default) is the mature shared-HTML
+   * reader; 'native' is the experimental pure-RN reader (iOS-only, see
+   * ink://inkread/specs/native-reader) — currently scroll-mode + native
+   * selection. Device-local in spirit; harmless if it syncs.
+   */
+  readerEngine?: 'webview' | 'native';
 }
 
 const META_KEY = 'preferences';

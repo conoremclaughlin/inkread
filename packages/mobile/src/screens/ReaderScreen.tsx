@@ -6,6 +6,7 @@ import {
   Easing,
   FlatList,
   Linking,
+  Platform,
   Pressable,
   Share,
   StyleSheet,
@@ -13,7 +14,8 @@ import {
   View,
   type ViewStyle,
 } from 'react-native';
-import { StatusBar } from 'expo-status-bar';
+import { setStatusBarStyle, type StatusBarStyle } from 'expo-status-bar';
+import { useFocusEffect } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 import {
@@ -49,6 +51,8 @@ import { resolveVoice, listVoices, QUALITY_LABEL, type VoiceOption } from '../tt
 import { ensureListeningAudioSession } from '../lib/audio';
 import { resetClientStore } from '../store/clientStore';
 import { BottomSheet } from '../components/BottomSheet';
+import { NativeReaderView } from '../components/NativeReaderView';
+import { NativePagedView } from '../components/NativePagedView';
 import { colors } from '../ui/theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -291,6 +295,11 @@ function ReaderInner({
   const [pagination, setPagination] = useState<'scroll' | 'paged'>(
     preferences.pagination ?? 'scroll',
   );
+  // Experimental pure-RN reader (iOS-only). Off by default; the WebView reader
+  // stays the mature path until the native one reaches parity.
+  const [readerEngine, setReaderEngine] = useState<'webview' | 'native'>(
+    preferences.readerEngine === 'native' && Platform.OS === 'ios' ? 'native' : 'webview',
+  );
   const [annotations, setAnnotations] = useState<Annotation[]>(loaded.annotations);
   const [selection, setSelection] = useState<Selection | undefined>();
   // Cross-page highlight: anchored at a selection, then you flip pages (edge
@@ -306,6 +315,9 @@ function ReaderInner({
   const [settingsVisible, setSettingsVisible] = useState(false);
   const [ttsVisible, setTtsVisible] = useState(false);
   const [ttsPlaying, setTtsPlaying] = useState(false);
+  // The sentence TTS is speaking, as a chapter-relative range. Drives the native
+  // readers' read-along tint; the WebView reader marks it via injectJavaScript.
+  const [ttsMark, setTtsMark] = useState<{ start: number; end: number } | undefined>();
   const [ttsRate, setTtsRate] = useState(preferences.ttsRate ?? 1.0);
   const [ttsVoiceId, setTtsVoiceId] = useState<string | undefined>(preferences.ttsVoice);
   const [voiceSheetVisible, setVoiceSheetVisible] = useState(false);
@@ -329,6 +341,30 @@ function ReaderInner({
 
   const insets = useSafeAreaInsets();
   const panel = useMemo(() => panelFor(theme), [theme]);
+
+  // Keep the iOS status-bar icons (clock, signal, battery) legible against the
+  // reader theme. This app sets UIViewControllerBasedStatusBarAppearance = NO,
+  // so the status bar is driven by the app-level API rather than per-screen —
+  // and the reader is a full-screen modal — which makes the declarative
+  // <StatusBar> unreliable across the present/dismiss transition. Drive it
+  // imperatively: light icons on a dark theme, dark icons on a light one.
+  const statusStyle: StatusBarStyle = panel.dark ? 'light' : 'dark';
+  // Follow theme changes while the reader is on screen (no flicker: the focus
+  // effect below has empty deps, so only this runs on a theme switch).
+  useEffect(() => {
+    setStatusBarStyle(statusStyle, true);
+  }, [statusStyle]);
+  // Re-assert on every focus (entering the reader, or returning from Notes),
+  // reading the current theme via a ref; restore the app's default dark icons
+  // for the always-light rest of the app when the reader loses focus.
+  const statusStyleRef = useRef<StatusBarStyle>(statusStyle);
+  statusStyleRef.current = statusStyle;
+  useFocusEffect(
+    useCallback(() => {
+      setStatusBarStyle(statusStyleRef.current, true);
+      return () => setStatusBarStyle('dark', true);
+    }, []),
+  );
   // Theme-reactive chrome + safe-area padding, applied over the layout styles.
   const dyn = useMemo(
     () => ({
@@ -433,8 +469,11 @@ function ReaderInner({
     tts.setListener((status) => {
       setTtsPlaying(status.playing);
       if (status.sentence && status.playing) {
+        const { start, end } = status.sentence;
+        // Native reader follows the mark via state; WebView reader via injection.
+        setTtsMark({ start, end });
         webviewRef.current?.injectJavaScript(
-          `window.__reader && window.__reader.markSentence(${status.sentence.start}, ${status.sentence.end});true;`,
+          `window.__reader && window.__reader.markSentence(${start}, ${end});true;`,
         );
       }
       // Ran off the end of the chapter → advance and keep reading. Note the
@@ -463,6 +502,9 @@ function ReaderInner({
 
   useEffect(() => {
     const tts = getTts();
+    // The mark is chapter-relative; drop the old chapter's before the new one
+    // renders so it can't tint the wrong text (the next spoken sentence resets it).
+    setTtsMark(undefined);
     const offset =
       restoreOffsetRef.current >= Number.MAX_SAFE_INTEGER
         ? Math.max(0, chapterText.length - 1)
@@ -539,6 +581,7 @@ function ReaderInner({
   const closeTts = useCallback(() => {
     getTts().stop();
     setTtsVisible(false);
+    setTtsMark(undefined);
     webviewRef.current?.injectJavaScript(
       'window.__reader && window.__reader.clearSentence();true;',
     );
@@ -660,6 +703,27 @@ function ReaderInner({
     });
   }, [addHighlight, selection]);
 
+  // Native reader selection. In extend mode a *second* native selection marks
+  // the far end of the highlight, so the range spans from the anchor to it —
+  // the native answer to the WebView's tap-the-end-word flow, no offset probing.
+  // Otherwise the selection just drives the action bar.
+  const handleNativeSelection = useCallback(
+    (sel: { start: number; end: number; text: string } | undefined) => {
+      if (extend && sel) {
+        setExtend((prev) => {
+          if (!prev) return prev;
+          const anchorEnd = prev.anchor + prev.anchorText.length;
+          const start = Math.min(prev.anchor, sel.start);
+          const end = Math.max(anchorEnd, sel.end);
+          return { ...prev, range: { start, end, text: chapterText.slice(start, end) } };
+        });
+      } else {
+        setSelection(sel);
+      }
+    },
+    [extend, chapterText],
+  );
+
   const sharePassage = useCallback(
     (passage: string, note?: string) => {
       if (!book) return;
@@ -735,6 +799,25 @@ function ReaderInner({
     [chapters.length],
   );
 
+  // Reading position moved (a WebView scroll message or the native reader's
+  // scroll): cache it, mark the TTS queue stale if paused, advance the furthest
+  // mark, and persist best-effort. Shared so both engines behave identically.
+  const recordOffset = useCallback(
+    (offset: number) => {
+      restoreOffsetRef.current = offset;
+      if (ttsRef.current && !ttsRef.current.status.playing) ttsStaleRef.current = true;
+      setFurthest((prior) =>
+        !prior ||
+        chapterIndex > prior.chapterIndex ||
+        (chapterIndex === prior.chapterIndex && offset > prior.offset)
+          ? { chapterIndex, offset }
+          : prior,
+      );
+      void persistPosition({ bookId, chapterIndex, offset });
+    },
+    [bookId, chapterIndex],
+  );
+
   // --- WebView bridge ------------------------------------------------------
   const handleMessage = useCallback(
     (event: WebViewMessageEvent) => {
@@ -779,25 +862,9 @@ function ReaderInner({
               : prev,
           );
           break;
-        case 'scroll': {
-          const offset = Number(msg.offset) || 0;
-          restoreOffsetRef.current = offset;
-          // Reading moved while TTS was paused → the queue is stale; the
-          // next play picks up from here instead of the old sentence.
-          if (ttsRef.current && !ttsRef.current.status.playing) ttsStaleRef.current = true;
-          setFurthest((prior) => {
-            if (
-              !prior ||
-              chapterIndex > prior.chapterIndex ||
-              (chapterIndex === prior.chapterIndex && offset > prior.offset)
-            ) {
-              return { chapterIndex, offset };
-            }
-            return prior;
-          });
-          void persistPosition({ bookId, chapterIndex, offset });
+        case 'scroll':
+          recordOffset(Number(msg.offset) || 0);
           break;
-        }
         case 'pageEdge':
           // Page turn past the chapter boundary → flow into the neighbor,
           // landing on its last page when going backwards.
@@ -812,12 +879,15 @@ function ReaderInner({
           break;
       }
     },
-    [bookId, chapterIndex, goToChapter, handleTapHighlight],
+    [chapterIndex, goToChapter, handleTapHighlight, recordOffset],
   );
 
+  // Paged page-turns only exist in the WebView reader; the native reader is
+  // scroll-only for now, so its Prev/Next move between chapters.
+  const pagedNav = pagination === 'paged' && readerEngine === 'webview';
   const turnOrGo = useCallback(
     (delta: number) => {
-      if (pagination === 'paged') {
+      if (pagedNav) {
         webviewRef.current?.injectJavaScript(
           `window.__reader && window.__reader.turnPage(${delta});true;`,
         );
@@ -825,7 +895,7 @@ function ReaderInner({
         goToChapter(chapterIndex + delta, delta < 0 ? Number.MAX_SAFE_INTEGER : 0);
       }
     },
-    [chapterIndex, goToChapter, pagination],
+    [chapterIndex, goToChapter, pagedNav],
   );
 
   if (!book || !chapter) {
@@ -836,29 +906,72 @@ function ReaderInner({
     );
   }
 
-  const prevDisabled = pagination === 'scroll' && chapterIndex === 0;
-  const nextDisabled = pagination === 'scroll' && chapterIndex >= chapters.length - 1;
+  const prevDisabled = !pagedNav && chapterIndex === 0;
+  const nextDisabled = !pagedNav && chapterIndex >= chapters.length - 1;
   const currentVoiceName =
     voices.find((v) => v.identifier === ttsVoiceId)?.name ??
     (ttsVoiceId ? 'Selected voice' : 'Automatic');
 
   return (
     <View style={[styles.screen, { backgroundColor: panel.bg }]}>
-      <StatusBar style={panel.dark ? 'light' : 'dark'} />
+      {/* Status-bar style is driven imperatively above (setStatusBarStyle),
+          which survives the modal present/dismiss transition reliably. */}
       {/* Reserve room for the Listen transport so it lifts the text off the
           bottom instead of covering the final lines. The chapter-nav bar stays
           an overlay — it's transient chrome that fades, not a persistent panel. */}
       <View
         style={{ flex: 1, paddingTop: insets.top, paddingBottom: ttsVisible ? ttsBarHeight : 0 }}
       >
-        <WebView
-          ref={webviewRef}
-          source={{ html }}
-          originWhitelist={['*']}
-          onMessage={handleMessage}
-          menuItems={[]}
-          style={styles.webview}
-        />
+        {readerEngine === 'native' ? (
+          // Pure-RN reader (native selection → offsets, with the TTS read-along
+          // mark). The WebView still owns cross-page extend.
+          pagination === 'paged' ? (
+            <NativePagedView
+              key={chapterIndex}
+              paragraphs={chapter.paragraphs}
+              title={chapter.title}
+              annotations={chapterAnnotations}
+              fontSize={fontSize}
+              lineHeight={Math.round(fontSize * 1.55)}
+              color={panel.fg}
+              background={panel.bg}
+              highlightAlpha={Number(READER_THEMES[theme]?.hlAlpha ?? READER_THEMES.paper.hlAlpha)}
+              ttsMark={ttsMark}
+              onSelection={handleNativeSelection}
+              onTapHighlight={handleTapHighlight}
+              onReachStart={() => goToChapter(chapterIndex - 1, Number.MAX_SAFE_INTEGER)}
+              onReachEnd={() => goToChapter(chapterIndex + 1)}
+              onChromeVisibility={setChromeVisible}
+            />
+          ) : (
+            <NativeReaderView
+              key={chapterIndex}
+              paragraphs={chapter.paragraphs}
+              title={chapter.title}
+              annotations={chapterAnnotations}
+              fontSize={fontSize}
+              lineHeight={Math.round(fontSize * 1.55)}
+              color={panel.fg}
+              background={panel.bg}
+              highlightAlpha={Number(READER_THEMES[theme]?.hlAlpha ?? READER_THEMES.paper.hlAlpha)}
+              initialOffset={restoreOffsetRef.current}
+              ttsMark={ttsMark}
+              onSelection={handleNativeSelection}
+              onTapHighlight={handleTapHighlight}
+              onOffsetChange={recordOffset}
+              onChromeVisibility={setChromeVisible}
+            />
+          )
+        ) : (
+          <WebView
+            ref={webviewRef}
+            source={{ html }}
+            originWhitelist={['*']}
+            onMessage={handleMessage}
+            menuItems={[]}
+            style={styles.webview}
+          />
+        )}
       </View>
 
       {/* Top bar: close (X) on the left, actions on the right. Fades with chrome. */}
@@ -976,6 +1089,8 @@ function ReaderInner({
           <Pressable hitSlop={8} onPress={promptNote}>
             <Text style={[styles.selectionAction, dyn.accentText]}>Note</Text>
           </Pressable>
+          {/* Extend: WebView flows anchor → flip pages → tap end; native flows
+              anchor → select the far end (handleNativeSelection folds it in). */}
           <Pressable hitSlop={8} onPress={startExtend}>
             <Text style={[styles.selectionAction, dyn.accentText]}>Extend</Text>
           </Pressable>
@@ -990,12 +1105,14 @@ function ReaderInner({
           pointerEvents="box-none"
         >
           <Text style={[styles.extendHint, dyn.pill, dyn.mutedText]}>
-            {pagination === 'paged'
-              ? 'Tap the last word · use ‹ › to change pages · then pick a colour'
-              : 'Scroll to the last word, then pick a colour'}
+            {readerEngine === 'native'
+              ? 'Select where the highlight ends, then pick a colour'
+              : pagination === 'paged'
+                ? 'Tap the last word · use ‹ › to change pages · then pick a colour'
+                : 'Scroll to the last word, then pick a colour'}
           </Text>
           <View style={[styles.extendBar, dyn.pill]}>
-            {pagination === 'paged' ? (
+            {pagedNav ? (
               <Pressable hitSlop={10} onPress={() => turnOrGo(-1)}>
                 <Text style={[styles.extendPage, dyn.accentText]}>‹</Text>
               </Pressable>
@@ -1007,7 +1124,7 @@ function ReaderInner({
                 onPress={() => confirmExtend(color)}
               />
             ))}
-            {pagination === 'paged' ? (
+            {pagedNav ? (
               <Pressable hitSlop={10} onPress={() => turnOrGo(1)}>
                 <Text style={[styles.extendPage, dyn.accentText]}>›</Text>
               </Pressable>
@@ -1130,6 +1247,37 @@ function ReaderInner({
             ))}
           </View>
         </View>
+
+        {Platform.OS === 'ios' ? (
+          <View style={[styles.settingsRow, dyn.border]}>
+            <Text style={[styles.settingsLabel, dyn.fgText]}>Reader · beta</Text>
+            <View style={[styles.segment, { backgroundColor: withAlpha(panel.fg, 0.08) }]}>
+              {(['webview', 'native'] as const).map((engine) => (
+                <Pressable
+                  key={engine}
+                  style={[
+                    styles.segmentItem,
+                    readerEngine === engine && {
+                      backgroundColor: panel.bg,
+                      borderColor: panel.border,
+                      borderWidth: StyleSheet.hairlineWidth,
+                    },
+                  ]}
+                  onPress={() => {
+                    setReaderEngine(engine);
+                    void savePreferences({ readerEngine: engine });
+                  }}
+                >
+                  <Text
+                    style={[styles.segmentText, readerEngine === engine ? dyn.fgText : dyn.mutedText]}
+                  >
+                    {engine === 'webview' ? 'Classic' : 'Native'}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          </View>
+        ) : null}
 
         <Pressable style={[styles.settingsRow, dyn.border]} onPress={openVoiceSheet}>
           <Text style={[styles.settingsLabel, dyn.fgText]}>Voice</Text>

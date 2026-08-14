@@ -23,7 +23,9 @@ export { paginate, pageOfLine, type LineBox, type Page } from './reader/paginati
 export {
   segmentParagraph,
   segmentChapterRuns,
+  applyMark,
   type Run,
+  type MarkedRun,
   type ParagraphRuns,
 } from './reader/runs';
 export {
