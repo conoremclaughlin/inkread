@@ -13,6 +13,8 @@ export { exportAnnotationsMarkdown, formatPassageShare } from './export/markdown
 export { exportAnnotationsCsv } from './export/csv';
 export {
   buildReaderHtml,
+  highlightRgb,
+  isDarkTheme,
   HIGHLIGHT_COLORS,
   READER_THEMES,
   type ReaderTheme,

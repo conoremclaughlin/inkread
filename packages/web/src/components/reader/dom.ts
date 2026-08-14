@@ -48,6 +48,89 @@ export function rangeOffsets(
   };
 }
 
+/**
+ * Nudge a caret position to the end of the word it landed in.
+ *
+ * Tapping to set a highlight's end point should include the whole word — a
+ * caret two characters into "principles" means "…principles", not "…pri".
+ */
+export function snapToWordEnd(text: string, offset: number): number {
+  let end = Math.max(0, Math.min(text.length, offset));
+  while (end < text.length && text[end]!.trim() !== '') end += 1;
+  return end;
+}
+
+/**
+ * The chapter offset under a viewport point (used to set the end of a
+ * cross-page highlight). Null outside the chapter text, or where the browser
+ * exposes no caret API.
+ */
+export function offsetAtPoint(root: ParentNode, x: number, y: number): number | null {
+  const doc = (root as Element).ownerDocument ?? document;
+  let node: Node | null = null;
+  let offset = 0;
+  const withCaretRange = doc as Document & {
+    caretRangeFromPoint?: (x: number, y: number) => Range | null;
+    caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null;
+  };
+  if (withCaretRange.caretRangeFromPoint) {
+    const range = withCaretRange.caretRangeFromPoint(x, y);
+    if (!range) return null;
+    node = range.startContainer;
+    offset = range.startOffset;
+  } else if (withCaretRange.caretPositionFromPoint) {
+    const position = withCaretRange.caretPositionFromPoint(x, y);
+    if (!position) return null;
+    node = position.offsetNode;
+    offset = position.offset;
+  } else {
+    return null;
+  }
+  if (node.nodeType === 3) offset = snapToWordEnd(node.textContent ?? '', offset);
+  const paragraph = paragraphOf(node);
+  if (!paragraph || !root.contains(paragraph)) return null;
+  return offsetWithin(paragraph, node, offset);
+}
+
+/** A paragraph's chapter offset plus where it currently sits on screen. */
+export interface ParagraphBox {
+  offset: number;
+  rect: { top: number; bottom: number; left: number; right: number };
+}
+
+/**
+ * The reading position: the offset of the first paragraph still on screen.
+ *
+ * Scroll mode reads top-down (a paragraph counts once its bottom edge clears
+ * the top of the viewport); paged mode reads left-to-right (a paragraph counts
+ * once its right edge clears the left margin and it hasn't yet passed the
+ * right edge). Both leave a small slack so a paragraph only just leaving the
+ * view doesn't claim the position. Returns null when nothing is visible —
+ * mid-turn, or before layout — and the caller keeps its previous position.
+ */
+export function visibleOffset(
+  boxes: ParagraphBox[],
+  bounds: { top: number; left: number; right: number },
+  mode: 'scroll' | 'paged',
+): number | null {
+  for (const box of boxes) {
+    const visible =
+      mode === 'paged'
+        ? box.rect.right > bounds.left + 44 && box.rect.left < bounds.right
+        : box.rect.bottom > bounds.top + 10;
+    if (visible) return box.offset;
+  }
+  return null;
+}
+
+/** Read every rendered paragraph's offset and on-screen box, in document order. */
+export function paragraphBoxes(root: ParentNode): ParagraphBox[] {
+  return Array.from(root.querySelectorAll('p[data-po]')).map((p) => ({
+    offset: parseInt(p.getAttribute('data-po') ?? '0', 10),
+    rect: p.getBoundingClientRect(),
+  }));
+}
+
 export interface ResolvedOffset {
   node: Node;
   offset: number;

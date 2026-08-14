@@ -1,6 +1,14 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest';
-import { offsetWithin, paragraphOf, rangeOffsets, resolveOffset } from './dom';
+import {
+  offsetWithin,
+  paragraphOf,
+  rangeOffsets,
+  resolveOffset,
+  snapToWordEnd,
+  visibleOffset,
+  type ParagraphBox,
+} from './dom';
 
 /**
  * Fixture mirrors the offset model: chapter text = paragraphs.join('\n').
@@ -82,6 +90,60 @@ describe('rangeOffsets', () => {
     range.setStart(stray.firstChild!, 0);
     range.setEnd(stray.firstChild!, 3);
     expect(rangeOffsets(range)).toBeNull();
+  });
+});
+
+describe('snapToWordEnd', () => {
+  it('extends a caret inside a word to the end of that word', () => {
+    expect(snapToWordEnd('Hello world.', 2)).toBe(5);
+    expect(snapToWordEnd('Hello world.', 7)).toBe(12);
+  });
+
+  it('leaves a caret already at a boundary alone', () => {
+    expect(snapToWordEnd('Hello world.', 5)).toBe(5);
+  });
+
+  it('clamps out-of-range carets', () => {
+    expect(snapToWordEnd('Hello', 99)).toBe(5);
+    expect(snapToWordEnd('Hello', -3)).toBe(5);
+  });
+});
+
+describe('visibleOffset', () => {
+  const box = (offset: number, rect: Partial<ParagraphBox['rect']>): ParagraphBox => ({
+    offset,
+    rect: { top: 0, bottom: 0, left: 0, right: 0, ...rect },
+  });
+
+  it('is the first paragraph whose bottom clears the viewport top (scroll)', () => {
+    const boxes = [
+      box(0, { top: -400, bottom: -20 }), // scrolled off
+      box(13, { top: -20, bottom: 60 }), // straddling the top edge
+      box(31, { top: 60, bottom: 200 }),
+    ];
+    expect(visibleOffset(boxes, { top: 0, left: 0, right: 800 }, 'scroll')).toBe(13);
+  });
+
+  it('is the first column still right of the margin (paged)', () => {
+    const boxes = [
+      box(0, { left: -600, right: -100 }), // turned past
+      box(13, { left: -100, right: 300 }), // current page
+      box(31, { left: 700, right: 1100 }), // next page
+    ];
+    expect(visibleOffset(boxes, { top: 0, left: 0, right: 800 }, 'paged')).toBe(13);
+  });
+
+  it('ignores a paragraph clinging to the very top / left edge', () => {
+    // Within the slack, so the paragraph after it owns the position.
+    const boxes = [box(0, { bottom: 4, right: 20 }), box(13, { bottom: 300, right: 400 })];
+    expect(visibleOffset(boxes, { top: 0, left: 0, right: 800 }, 'scroll')).toBe(13);
+    expect(visibleOffset(boxes, { top: 0, left: 0, right: 800 }, 'paged')).toBe(13);
+  });
+
+  it('returns null when nothing is on screen', () => {
+    const boxes = [box(0, { bottom: -50, right: -50 })];
+    expect(visibleOffset(boxes, { top: 0, left: 0, right: 800 }, 'scroll')).toBeNull();
+    expect(visibleOffset(boxes, { top: 0, left: 0, right: 800 }, 'paged')).toBeNull();
   });
 });
 

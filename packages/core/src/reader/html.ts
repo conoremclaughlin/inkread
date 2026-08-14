@@ -75,7 +75,7 @@ export const HIGHLIGHT_COLORS: Record<string, string> = {
 };
 
 /** Themes whose page is dark enough that the reader's text is the light layer. */
-function isDarkTheme(theme: ReaderTheme): boolean {
+export function isDarkTheme(theme: ReaderTheme): boolean {
   return theme === 'night' || theme === 'midnight' || theme === 'dark';
 }
 
@@ -87,7 +87,7 @@ function isDarkTheme(theme: ReaderTheme): boolean {
  * (desaturate) and darken it, so the fill drops below the text in lightness —
  * the words read clearly on top while the hue is still recognisable.
  */
-function highlightRgb(color: string, theme: ReaderTheme): string {
+export function highlightRgb(color: string, theme: ReaderTheme): string {
   const raw = HIGHLIGHT_COLORS[color] ?? HIGHLIGHT_COLORS['yellow']!;
   if (!isDarkTheme(theme)) return raw;
   const [r, g, b] = raw.split(',').map((n) => parseInt(n.trim(), 10)) as [number, number, number];
