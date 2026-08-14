@@ -88,6 +88,7 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) for the full reference on coding style,
 - Angular commit convention: `feat(scope): description`
 - Do not squash commits on merge
 - camelCase for variables/functions, PascalCase for types/components
+- Branches: personal work on `<moniker>/<type>/<scope>`; shared integration branches on `release/<type>/<description>` (`release` is a reserved prefix; types from the standard commit-type list — see CONTRIBUTING.md)
 
 ## Development Commands
 
