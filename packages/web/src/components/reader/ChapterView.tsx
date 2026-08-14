@@ -220,9 +220,10 @@ export const ChapterView = forwardRef<ReaderHandle, ChapterViewProps>(function C
       maxXRef.current = 0;
       return;
     }
+    const prior = content.style.overflow;
     content.style.overflow = 'hidden';
     maxXRef.current = Math.max(0, content.scrollWidth - content.clientWidth);
-    content.style.overflow = '';
+    content.style.overflow = prior;
   }, [paged]);
 
   const settleTo = useCallback(

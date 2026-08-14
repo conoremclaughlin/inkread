@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import Link from 'next/link';
 import {
-  buildReaderHtml,
   formatPassageShare,
   HIGHLIGHT_COLORS,
   READER_THEMES,
@@ -19,6 +18,7 @@ import { KokoroTtsController, KOKORO_DEFAULT_VOICE } from '@/lib/tts/kokoro';
 import { KOKORO_VOICES } from '@/lib/tts/voices';
 import { useIsElectron } from '@/lib/useIsElectron';
 import { CommentsDrawer } from '@/components/CommentsDrawer';
+import { ChapterView, type ReaderHandle } from '@/components/reader/ChapterView';
 import { createLibrarySource } from '@/components/reader/source';
 
 type TtsPlayer = WebTtsController | KokoroTtsController;
@@ -74,15 +74,6 @@ const PlayerIcon = ({ d, filled }: { d: string; filled?: boolean }) => (
     <path d={d} />
   </svg>
 );
-
-type ReaderBridge = {
-  scrollToOffset: (offset: number) => void;
-  turnPage: (delta: number) => void;
-  markSentence: (start: number, end: number) => void;
-  clearSentence: () => void;
-  beginExtend: (start: number, end: number) => void;
-  endExtend: () => void;
-};
 
 /** Head … tail of a selection so a multi-page range is verifiable at a glance. */
 function rangePreview(text: string): string {
@@ -206,7 +197,7 @@ export function Reader({
     }, 600);
   }, [fixedTheme, themeMode, lightChoice, darkChoice, fontSize, pagination, rate, voice]);
 
-  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const viewRef = useRef<ReaderHandle>(null);
   const activeTocRef = useRef<HTMLButtonElement>(null);
   const offsetRef = useRef(initialPosition?.offset ?? 0);
   const [furthest, setFurthest] = useState(initialPosition?.furthest);
@@ -222,22 +213,8 @@ export function Reader({
     () => annotations.filter((a) => a.locator.chapterIndex === chapterIndex),
     [annotations, chapterIndex],
   );
-  const html = useMemo(
-    () =>
-      chapter && chapter.paragraphs && !chapter.locked
-        ? buildReaderHtml(
-            { title: chapter.title, paragraphs: chapter.paragraphs },
-            chapterAnnotations,
-            { theme, fontSize, pagination },
-          )
-        : '',
-    [chapter, chapterAnnotations, theme, fontSize, pagination],
-  );
-
-  const bridge = useCallback((): ReaderBridge | undefined => {
-    return (iframeRef.current?.contentWindow as (Window & { __reader?: ReaderBridge }) | null)
-      ?.__reader;
-  }, []);
+  /** The live page view; undefined only before the first render. */
+  const bridge = useCallback((): ReaderHandle | undefined => viewRef.current ?? undefined, []);
 
   const ttsContinueRef = useRef(false);
   const ttsStaleRef = useRef(false);
@@ -439,70 +416,49 @@ export function Reader({
     }
   }, [book.id]);
 
-  // Bridge messages from the reader iframe.
-  useEffect(() => {
-    const onMessage = (event: MessageEvent) => {
-      const data = event.data as { source?: string; payload?: string };
-      if (data?.source !== 'inkread-reader' || !data.payload) return;
-      const msg = JSON.parse(data.payload) as { type: string; [key: string]: unknown };
-      switch (msg.type) {
-        case 'ready':
-          if (offsetRef.current > 0) bridge()?.scrollToOffset(offsetRef.current);
-          break;
-        case 'selection':
-          if (msg.clear) setSelection(undefined);
-          else
-            setSelection({
-              start: Number(msg.start),
-              end: Number(msg.end),
-              text: String(msg.text ?? ''),
-            });
-          break;
-        case 'extendPoint':
-          setExtend((prev) =>
-            prev
-              ? {
-                  ...prev,
-                  range: {
-                    start: Number(msg.start),
-                    end: Number(msg.end),
-                    text: String(msg.text ?? ''),
-                  },
-                }
-              : prev,
-          );
-          break;
-        case 'scroll':
-          savePosition(Number(msg.offset) || 0);
-          break;
-        case 'tapHighlight': {
-          const annotation = annotations.find((a) => a.id === msg.id);
-          if (annotation) setActing(annotation);
-          break;
+  // --- Page view events ------------------------------------------------------
+  // The view reports in chapter offsets; the chrome owns what they mean.
+
+  /** Laid out and ready — restore the reading position we were sent with. */
+  const onViewReady = useCallback(() => {
+    if (offsetRef.current > 0) viewRef.current?.scrollToOffset(offsetRef.current);
+  }, []);
+
+  const onExtendPoint = useCallback((range: { start: number; end: number; text: string }) => {
+    setExtend((prev) => (prev ? { ...prev, range } : prev));
+  }, []);
+
+  const onTapHighlight = useCallback(
+    (id: string) => {
+      const annotation = annotations.find((a) => a.id === id);
+      if (annotation) setActing(annotation);
+    },
+    [annotations],
+  );
+
+  /** A page turn ran off the chapter — flow into the neighbour. */
+  const onPageEdge = useCallback(
+    (direction: 'prev' | 'next') => {
+      setChapterIndex((index) => {
+        if (direction === 'next' && index + 1 < source.count) {
+          offsetRef.current = 0;
+          return index + 1;
         }
-        case 'pageEdge':
-          setChapterIndex((index) => {
-            if (msg.dir === 'next' && index + 1 < source.count) {
-              offsetRef.current = 0;
-              return index + 1;
-            }
-            if (msg.dir === 'prev' && index > 0) {
-              // Land on the last page of the previous chapter.
-              offsetRef.current = Number.MAX_SAFE_INTEGER;
-              return index - 1;
-            }
-            return index;
-          });
-          break;
-        case 'tap':
-          setTocOpen(false);
-          setThemeOpen(false);
-          break;
-      }
-    };
-    window.addEventListener('message', onMessage);
-    return () => window.removeEventListener('message', onMessage);
-  }, [annotations, bridge, source.count, reloadAnnotations, savePosition]);
+        if (direction === 'prev' && index > 0) {
+          // Land on the last page of the previous chapter.
+          offsetRef.current = Number.MAX_SAFE_INTEGER;
+          return index - 1;
+        }
+        return index;
+      });
+    },
+    [source.count],
+  );
+
+  const onTapPage = useCallback(() => {
+    setTocOpen(false);
+    setThemeOpen(false);
+  }, []);
 
   // Tear down whichever TTS engine is live when leaving the reader.
   useEffect(() => {
@@ -775,14 +731,28 @@ export function Reader({
         }}
       />
 
-      <div className={`relative flex-1 ${ttsOpen ? 'pb-14' : ''}`}>
-        <iframe
-          ref={iframeRef}
-          srcDoc={html}
-          sandbox="allow-scripts allow-same-origin"
-          className="h-full w-full border-0"
-          title={chapter.title}
-        />
+      {/* min-h-0: a flex item defaults to min-height:auto, so without this the
+          chapter's own height wins and the whole window scrolls instead of the
+          page. (The old iframe hid this — it never grew with its content.) */}
+      <div className={`relative min-h-0 flex-1 ${ttsOpen ? 'pb-14' : ''}`}>
+        {chapter.paragraphs && !chapter.locked ? (
+          <ChapterView
+            ref={viewRef}
+            title={chapter.title}
+            paragraphs={chapter.paragraphs}
+            annotations={chapterAnnotations}
+            theme={theme}
+            fontSize={fontSize}
+            pagination={pagination}
+            onReady={onViewReady}
+            onSelection={setSelection}
+            onExtendPoint={onExtendPoint}
+            onPosition={savePosition}
+            onTapHighlight={onTapHighlight}
+            onPageEdge={onPageEdge}
+            onTap={onTapPage}
+          />
+        ) : null}
 
         {anyMenuOpen ? (
           <button
