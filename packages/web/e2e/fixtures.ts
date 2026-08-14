@@ -151,6 +151,52 @@ async function seedUserAndBook(): Promise<Seeded> {
   return { userId, email, password, bookId, admin };
 }
 
+export interface SeededSeries extends Seeded {
+  /** The author's user id — the series is published from their library. */
+  authorId: string;
+  freeChapterCount: number;
+  coinsPerChapter: number;
+}
+
+/**
+ * A published, priced series plus a *reader* account that doesn't own it —
+ * the shape the public reader is actually used in.
+ */
+async function seedPublishedSeries(): Promise<SeededSeries> {
+  const author = await seedUserAndBook();
+  const { error } = await author.admin
+    .from('books')
+    .update({
+      visibility: 'public',
+      status: 'ongoing',
+      free_chapter_count: 1,
+      coins_per_chapter: 10,
+    })
+    .eq('id', author.bookId);
+  if (error) throw error;
+
+  // The reader is a different person: signup grants them the demo wallet.
+  const email = `e2e-reader-${randomBytes(5).toString('hex')}@inkread.test`;
+  const password = randomBytes(12).toString('hex');
+  const { data, error: userError } = await author.admin.auth.admin.createUser({
+    email,
+    password,
+    email_confirm: true,
+  });
+  if (userError) throw userError;
+
+  return {
+    admin: author.admin,
+    authorId: author.userId,
+    bookId: author.bookId,
+    userId: data.user.id,
+    email,
+    password,
+    freeChapterCount: 1,
+    coinsPerChapter: 10,
+  };
+}
+
 /** Sign in through the app so the session cookie is set the way the app sets it. */
 export async function signIn(page: Page, email: string, password: string): Promise<void> {
   await page.goto('/login');
@@ -160,11 +206,22 @@ export async function signIn(page: Page, email: string, password: string): Promi
   await page.waitForURL('**/library', { timeout: 20_000 });
 }
 
-export const test = base.extend<{ seeded: Seeded; reader: { page: Page; seeded: Seeded } }>({
+export const test = base.extend<{
+  seeded: Seeded;
+  reader: { page: Page; seeded: Seeded };
+  series: SeededSeries;
+}>({
   seeded: async ({}, use) => {
     const seeded = await seedUserAndBook();
     await use(seeded);
     await seeded.admin.auth.admin.deleteUser(seeded.userId);
+  },
+  /** A published, priced series and a reader account that doesn't own it. */
+  series: async ({}, use) => {
+    const seeded = await seedPublishedSeries();
+    await use(seeded);
+    await seeded.admin.auth.admin.deleteUser(seeded.userId);
+    await seeded.admin.auth.admin.deleteUser(seeded.authorId);
   },
   /** A signed-in page already open on the seeded book's first chapter. */
   reader: async ({ page, seeded }, use) => {

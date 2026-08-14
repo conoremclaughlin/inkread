@@ -219,6 +219,26 @@ export async function getPublicSeries(bookId: string): Promise<PublicSeriesDetai
   return { series: rowToSeries(book, comments.length), chapters, comments };
 }
 
+/**
+ * One chapter's discussion for an anonymous visitor, newest-scored first.
+ * Same rows the series page ranks — public RLS keeps this to public books.
+ */
+export async function getPublicComments(
+  bookId: string,
+  chapterIndex: number,
+): Promise<PublicComment[]> {
+  const { data, error } = await publicClient()
+    .from('comments')
+    .select(
+      'id, book_id, chapter_index, author_name, body, created_at, score, up_count, down_count',
+    )
+    .eq('book_id', bookId)
+    .eq('chapter_index', chapterIndex)
+    .order('created_at', { ascending: false });
+  if (error || !data) return [];
+  return (data as PublicCommentRow[]).map((row) => rowToComment(row, ''));
+}
+
 interface ReadChapterRow {
   chapter_index: number;
   title: string;

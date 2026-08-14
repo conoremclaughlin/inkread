@@ -3,11 +3,22 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 
+export interface PaywallColors {
+  bg: string;
+  fg: string;
+  accent: string;
+  muted: string;
+  border: string;
+}
+
 /**
  * The paywall shown in place of a locked chapter's body. A signed-in reader can
  * spend coins to unlock just this chapter or the rest of the book, and top up
- * (demo coins) when short. Anonymous visitors are sent to sign in. On a
- * successful unlock we refresh the server component, which then renders the body.
+ * (demo coins) when short. Anonymous visitors are sent to sign in.
+ *
+ * After a successful purchase it calls `onUnlocked` when given one — that's how
+ * the in-reader paywall swaps itself for the text without a page reload — and
+ * otherwise refreshes the server component it was rendered by.
  */
 export function ReaderPaywall({
   bookId,
@@ -17,6 +28,8 @@ export function ReaderPaywall({
   balance,
   remainingCount,
   remainingBookCost,
+  colors,
+  onUnlocked,
 }: {
   bookId: string;
   chapterIndex: number;
@@ -25,6 +38,9 @@ export function ReaderPaywall({
   balance: number;
   remainingCount: number;
   remainingBookCost: number;
+  /** Reader theme, when embedded in the reader; omitted on the public page. */
+  colors?: PaywallColors;
+  onUnlocked?: () => void | Promise<void>;
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState<null | 'chapter' | 'book' | 'topup'>(null);
@@ -32,9 +48,14 @@ export function ReaderPaywall({
 
   const canAffordChapter = balance >= coinCost;
 
+  async function settled() {
+    if (onUnlocked) await onUnlocked();
+    else router.refresh();
+  }
+
   async function unlock(kind: 'chapter' | 'book') {
     if (!signedIn) {
-      window.location.href = '/login';
+      window.location.href = `/login?next=${encodeURIComponent(window.location.pathname)}`;
       return;
     }
     setBusy(kind);
@@ -51,7 +72,8 @@ export function ReaderPaywall({
         return;
       }
       if (!res.ok) throw new Error('unlock failed');
-      router.refresh();
+      await settled();
+      setBusy(null);
     } catch {
       setError('Something went wrong. Please try again.');
       setBusy(null);
@@ -68,7 +90,7 @@ export function ReaderPaywall({
         body: JSON.stringify({ amount: 100 }),
       });
       if (!res.ok) throw new Error('top-up failed');
-      router.refresh();
+      await settled();
     } catch {
       setError('Top-up failed. Please try again.');
     } finally {
@@ -76,10 +98,35 @@ export function ReaderPaywall({
     }
   }
 
+  // Embedded in the reader the panel wears the reading theme (a cream card on
+  // a night page would be a flashbang); on the public page it keeps the site's
+  // own palette.
+  const themed = Boolean(colors);
+  const cardStyle = colors
+    ? { background: colors.bg, color: colors.fg, borderColor: colors.border }
+    : undefined;
+  const accentStyle = colors ? { background: colors.accent, color: colors.bg } : undefined;
+  const mutedStyle = colors ? { color: colors.muted } : undefined;
+  const outlineStyle = colors
+    ? { borderColor: colors.border, color: colors.accent, background: 'transparent' }
+    : undefined;
+
   return (
-    <div className="my-8 rounded-2xl border border-[#e6dfd4] bg-gradient-to-b from-white to-[#fbf7f0] p-8 text-center shadow-sm">
+    <div
+      className={`my-8 rounded-2xl border p-8 text-center shadow-sm ${
+        themed ? '' : 'border-[#e6dfd4] bg-gradient-to-b from-white to-[#fbf7f0]'
+      }`}
+      style={cardStyle}
+    >
       <div
-        className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-[#f3ead9] text-[#8b5e3c]"
+        className={`mx-auto flex h-12 w-12 items-center justify-center rounded-full ${
+          themed ? '' : 'bg-[#f3ead9] text-[#8b5e3c]'
+        }`}
+        style={
+          colors
+            ? { background: `color-mix(in srgb, ${colors.accent} 18%, transparent)`, color: colors.accent }
+            : undefined
+        }
         aria-hidden
       >
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
@@ -87,14 +134,16 @@ export function ReaderPaywall({
           <path d="M8 10V7a4 4 0 0 1 8 0v3" stroke="currentColor" strokeWidth="1.8" />
         </svg>
       </div>
-      <h2 className="mt-4 font-serif text-xl text-[#26221c]">This chapter is locked</h2>
-      <p className="mt-1 text-[15px] text-[#6b6459]">
+      <h2 className={`mt-4 font-serif text-xl ${themed ? '' : 'text-[#26221c]'}`}>
+        This chapter is locked
+      </h2>
+      <p className={`mt-1 text-[15px] ${themed ? '' : 'text-[#6b6459]'}`} style={mutedStyle}>
         Unlock it with coins to keep reading — it&apos;s yours for good, in text and audio.
       </p>
 
       {signedIn ? (
-        <p className="mt-4 text-sm text-[#8a8175]">
-          Your balance: <span className="font-semibold text-[#26221c]">{balance}</span> coins
+        <p className={`mt-4 text-sm ${themed ? '' : 'text-[#8a8175]'}`} style={mutedStyle}>
+          Your balance: <span className="font-semibold">{balance}</span> coins
         </p>
       ) : null}
 
@@ -103,7 +152,10 @@ export function ReaderPaywall({
           type="button"
           onClick={() => unlock('chapter')}
           disabled={busy !== null}
-          className="w-full max-w-xs rounded-full bg-[#8b5e3c] px-5 py-3 text-sm font-medium text-white transition hover:bg-[#7a5133] disabled:opacity-60"
+          className={`w-full max-w-xs rounded-full px-5 py-3 text-sm font-medium transition disabled:opacity-60 ${
+            themed ? 'hover:opacity-90' : 'bg-[#8b5e3c] text-white hover:bg-[#7a5133]'
+          }`}
+          style={accentStyle}
         >
           {busy === 'chapter'
             ? 'Unlocking…'
@@ -117,7 +169,10 @@ export function ReaderPaywall({
             type="button"
             onClick={() => unlock('book')}
             disabled={busy !== null}
-            className="w-full max-w-xs rounded-full border border-[#d9cdb9] bg-white px-5 py-2.5 text-sm font-medium text-[#6b4a2e] transition hover:border-[#8b5e3c] disabled:opacity-60"
+            className={`w-full max-w-xs rounded-full border px-5 py-2.5 text-sm font-medium transition disabled:opacity-60 ${
+              themed ? 'hover:opacity-80' : 'border-[#d9cdb9] bg-white text-[#6b4a2e] hover:border-[#8b5e3c]'
+            }`}
+            style={outlineStyle}
           >
             {busy === 'book'
               ? 'Unlocking…'
@@ -130,14 +185,17 @@ export function ReaderPaywall({
             type="button"
             onClick={topUp}
             disabled={busy !== null}
-            className="mt-1 text-sm font-medium text-[#8b5e3c] underline-offset-2 hover:underline disabled:opacity-60"
+            className={`mt-1 text-sm font-medium underline-offset-2 hover:underline disabled:opacity-60 ${
+              themed ? '' : 'text-[#8b5e3c]'
+            }`}
+            style={colors ? { color: colors.accent } : undefined}
           >
             {busy === 'topup' ? 'Adding coins…' : '+100 demo coins'}
           </button>
         ) : null}
       </div>
 
-      {error ? <p className="mt-4 text-sm text-[#9a5b4f]">{error}</p> : null}
+      {error ? <p className="mt-4 text-sm text-[#c2705f]">{error}</p> : null}
     </div>
   );
 }

@@ -1,19 +1,27 @@
 import { NextResponse } from 'next/server';
-import { asResponse, getRepository } from '@/lib/data';
+import { asResponse, getRepository, UnauthorizedError } from '@/lib/data';
+import { getPublicComments } from '@/lib/data/public';
 
 type Params = { params: Promise<{ bookId: string }> };
 
-/** GET /api/books/:bookId/comments?chapter=N — reader comments on a chapter. */
+/**
+ * GET /api/books/:bookId/comments?chapter=N — reader comments on a chapter.
+ * Anonymous visitors get the public discussion (public books only), so the
+ * reader's comments drawer works for someone who hasn't signed in yet.
+ */
 export async function GET(request: Request, { params }: Params) {
+  const { bookId } = await params;
+  const chapter = Number(new URL(request.url).searchParams.get('chapter'));
+  if (!Number.isInteger(chapter) || chapter < 0) {
+    return NextResponse.json({ error: 'chapter query param is required' }, { status: 400 });
+  }
   try {
-    const { bookId } = await params;
-    const chapter = Number(new URL(request.url).searchParams.get('chapter'));
-    if (!Number.isInteger(chapter) || chapter < 0) {
-      return NextResponse.json({ error: 'chapter query param is required' }, { status: 400 });
-    }
     const repository = await getRepository();
     return NextResponse.json({ comments: await repository.listComments(bookId, chapter) });
   } catch (error) {
+    if (error instanceof UnauthorizedError) {
+      return NextResponse.json({ comments: await getPublicComments(bookId, chapter) });
+    }
     return asResponse(error);
   }
 }

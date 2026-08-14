@@ -1,21 +1,22 @@
-import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { remainingUnlockCost, type ReadChapter } from '@inkread/core';
+import type { Annotation, ReadChapter } from '@inkread/core';
 import { createClient } from '@/lib/supabase/server';
 import { getRepository } from '@/lib/data';
 import { getPublicChapter, getPublicSeries } from '@/lib/data/public';
-import { ReaderPaywall } from '@/components/ReaderPaywall';
-import { CommentsBoard } from '@/components/CommentsBoard';
-import { CommentComposer } from '@/components/CommentComposer';
+import { Reader } from '@/components/Reader';
 
 type Params = { params: Promise<{ bookId: string; chapter: string }> };
 
 /**
- * Public chapter reader for a published series — works for anonymous visitors
- * (free head only) and signed-in readers (their unlocks honored). Bodies come
- * through the entitlement gate; a locked chapter renders the paywall instead.
- * Kept separate from the owner's rich library reader so the paywall path stays
- * simple and the owner experience is untouched.
+ * Reading a published series — the same reader the owner uses, pointed at a
+ * public `ChapterSource` instead of an in-memory book.
+ *
+ * The page's job is only to resolve *who is asking* and hand the reader its
+ * first chapter: bodies come through the entitlement gate (anonymous visitors
+ * get the free head; a signed-in reader gets their unlocks honoured), and a
+ * locked chapter arrives without text so the reader draws a paywall. Everything
+ * after the first paint — turning chapters, unlocking, highlighting, listening
+ * — happens client-side through the source.
  */
 export default async function SeriesReadPage({ params }: Params) {
   const { bookId, chapter } = await params;
@@ -27,143 +28,82 @@ export default async function SeriesReadPage({ params }: Params) {
   const { series } = detail;
   if (index >= series.chapterCount) notFound();
 
-  // This chapter's slice of the (already score-ranked) discussion.
-  const chapterComments = detail.comments.filter((c) => c.chapterIndex === index);
-
   const supabase = await createClient();
-  let signedIn = false;
+  let userId: string | undefined;
   try {
     const {
       data: { user },
     } = await supabase.auth.getUser();
-    signedIn = Boolean(user);
+    userId = user?.id;
   } catch {
-    signedIn = false;
+    userId = undefined;
   }
+  const signedIn = Boolean(userId);
 
   let read: ReadChapter | undefined;
   let balance = 0;
   let unlocked: number[] = [];
+  let annotations: Annotation[] = [];
   if (signedIn) {
     const repository = await getRepository();
-    const [chap, wallet, owned] = await Promise.all([
+    const [chap, wallet, owned, notes] = await Promise.all([
       repository.readChapter(bookId, index),
       repository.getWallet(),
       repository.listMyUnlocks(bookId),
+      // A reader's highlights on someone else's book are still theirs.
+      repository.listAnnotations(bookId).catch(() => []),
     ]);
     read = chap;
     balance = wallet.balance;
     unlocked = owned;
+    annotations = notes;
   } else {
     read = await getPublicChapter(bookId, index);
   }
   if (!read) notFound();
 
-  const pricing = {
-    freeChapterCount: series.freeChapterCount,
-    coinsPerChapter: series.coinsPerChapter,
-  };
-  const ownedSet = new Set(unlocked);
-  const remainingBookCost = remainingUnlockCost(pricing, series.chapterCount, ownedSet);
-  let remainingCount = 0;
-  if (series.coinsPerChapter > 0) {
-    for (let i = series.freeChapterCount; i < series.chapterCount; i += 1) {
-      if (!ownedSet.has(i)) remainingCount += 1;
-    }
-  }
-
-  const prev = index > 0 ? index - 1 : null;
-  const next = index < series.chapterCount - 1 ? index + 1 : null;
+  // The TOC is public even where the bodies aren't, so chapter navigation and
+  // the "N / M" footer work from the first paint.
+  const titles = Array.from(
+    { length: series.chapterCount },
+    (_, i) => detail.chapters.find((c) => c.index === i)?.title ?? `Chapter ${i + 1}`,
+  );
 
   return (
-    <div className="min-h-screen">
-      <header className="sticky top-0 z-10 border-b border-[#ece4d7] bg-[#faf7f2]/85 backdrop-blur">
-        <div className="mx-auto flex max-w-2xl items-center justify-between gap-4 px-6 py-3.5">
-          <Link
-            href={`/series/${bookId}`}
-            className="min-w-0 truncate text-sm text-[#6b6459] transition hover:text-[#26221c]"
-          >
-            ← {series.title}
-          </Link>
-          {signedIn ? (
-            <span className="shrink-0 rounded-full bg-[#f3ead9] px-3 py-1 text-xs font-semibold text-[#8b5e3c]">
-              {balance} coins
-            </span>
-          ) : (
-            <Link
-              href="/login"
-              className="shrink-0 text-sm font-medium text-[#8b5e3c] transition hover:text-[#7a5133]"
-            >
-              Sign in
-            </Link>
-          )}
-        </div>
-      </header>
-
-      <main className="mx-auto max-w-2xl px-6 pb-20 pt-8">
-        <p className="text-sm font-medium uppercase tracking-wide text-[#a49a8b]">
-          Chapter {index + 1}
-        </p>
-        <h1 className="mt-1 font-serif text-3xl leading-tight text-[#26221c]">{read.title}</h1>
-
-        {read.locked ? (
-          <ReaderPaywall
-            bookId={bookId}
-            chapterIndex={index}
-            coinCost={read.coinCost}
-            signedIn={signedIn}
-            balance={balance}
-            remainingCount={remainingCount}
-            remainingBookCost={remainingBookCost}
-          />
-        ) : (
-          <article className="mt-8 space-y-5 font-serif text-[1.075rem] leading-[1.8] text-[#2c2820]">
-            {(read.paragraphs ?? []).map((paragraph, i) => (
-              <p key={i}>{paragraph}</p>
-            ))}
-          </article>
-        )}
-
-        <nav className="mt-12 flex items-center justify-between border-t border-[#ece4d7] pt-6 text-sm">
-          {prev !== null ? (
-            <Link
-              href={`/series/${bookId}/read/${prev}`}
-              className="rounded-full border border-[#e0d8ca] px-4 py-2 text-[#6b6459] transition hover:border-[#8b5e3c] hover:text-[#26221c]"
-            >
-              ← Previous
-            </Link>
-          ) : (
-            <span />
-          )}
-          {next !== null ? (
-            <Link
-              href={`/series/${bookId}/read/${next}`}
-              className="rounded-full border border-[#e0d8ca] px-4 py-2 text-[#6b6459] transition hover:border-[#8b5e3c] hover:text-[#26221c]"
-            >
-              Next →
-            </Link>
-          ) : (
-            <span className="text-[#a49a8b]">The End · more to come</span>
-          )}
-        </nav>
-
-        {/* Chapter discussion — only on chapters the reader can actually read, so
-            locked chapters never leak spoilers through the comments. */}
-        {!read.locked ? (
-          <section className="mt-12 border-t border-[#ece4d7] pt-8">
-            <h2 className="mb-4 font-serif text-xl text-[#26221c]">
-              Discussion
-              {chapterComments.length > 0 ? (
-                <span className="ml-2 text-base font-normal text-[#a49a8b]">
-                  {chapterComments.length}
-                </span>
-              ) : null}
-            </h2>
-            <CommentComposer bookId={bookId} chapterIndex={index} signedIn={signedIn} />
-            <CommentsBoard comments={chapterComments} signedIn={signedIn} />
-          </section>
-        ) : null}
-      </main>
-    </div>
+    <Reader
+      book={{
+        id: bookId,
+        title: series.title,
+        author: series.author,
+        source: 'text',
+        chapterCount: series.chapterCount,
+        createdAt: series.updatedAt,
+        updatedAt: series.updatedAt,
+      }}
+      publicSeries={{
+        bookId,
+        titles,
+        signedIn,
+        balance,
+        unlocked,
+        pricing: {
+          freeChapterCount: series.freeChapterCount,
+          coinsPerChapter: series.coinsPerChapter,
+        },
+        initial: {
+          index,
+          title: read.title,
+          paragraphs: read.paragraphs,
+          locked: read.locked,
+          coinCost: read.coinCost,
+        },
+      }}
+      initialAnnotations={annotations}
+      // The URL is the position here: /read/3 opens chapter three.
+      initialPosition={{ bookId, chapterIndex: index, offset: 0, updatedAt: series.updatedAt }}
+      currentUserId={userId}
+      backHref={`/series/${bookId}`}
+      backLabel={series.title}
+    />
   );
 }

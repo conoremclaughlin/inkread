@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties }
 import Link from 'next/link';
 import {
   formatPassageShare,
+  remainingUnlockCost,
   HIGHLIGHT_COLORS,
   READER_THEMES,
   type Annotation,
@@ -18,15 +19,27 @@ import { KokoroTtsController, KOKORO_DEFAULT_VOICE } from '@/lib/tts/kokoro';
 import { KOKORO_VOICES } from '@/lib/tts/voices';
 import { useIsElectron } from '@/lib/useIsElectron';
 import { CommentsDrawer } from '@/components/CommentsDrawer';
+import { ReaderPaywall } from '@/components/ReaderPaywall';
 import { ChapterView, type ReaderHandle } from '@/components/reader/ChapterView';
-import { createLibrarySource } from '@/components/reader/source';
+import {
+  createLibrarySource,
+  createPublicSource,
+  type LoadedChapter,
+  type PublicSourceInit,
+} from '@/components/reader/source';
 
 type TtsPlayer = WebTtsController | KokoroTtsController;
 type TtsEngine = 'kokoro' | 'system';
 
 interface ReaderProps {
   book: BookSummary;
-  chapters: Chapter[];
+  /** The owner's book, already in memory. Omit for the public reader. */
+  chapters?: Chapter[];
+  /**
+   * Public-series mode: chapters load lazily through the entitlement gate and
+   * writes are capability-gated. One reader, two data sources.
+   */
+  publicSeries?: Omit<PublicSourceInit, 'onAuthRequired'>;
   initialAnnotations: Annotation[];
   initialPosition: ReadingPosition | null;
   initialPreferences?: ReaderPreferences;
@@ -34,6 +47,9 @@ interface ReaderProps {
   offline?: boolean;
   /** Signed-in user id — enables deleting your own comments. */
   currentUserId?: string;
+  /** Where the back link goes (defaults to the personal library). */
+  backHref?: string;
+  backLabel?: string;
 }
 
 interface Selection {
@@ -84,16 +100,23 @@ function rangePreview(text: string): string {
 export function Reader({
   book,
   chapters,
+  publicSeries,
   initialAnnotations,
   initialPosition,
   initialPreferences,
   offline,
   currentUserId,
+  backHref = '/library',
+  backLabel = 'Library',
 }: ReaderProps) {
-  // The reader reads through a ChapterSource seam. Today the owner path wraps
-  // the in-memory book (peek resolves synchronously, so behavior is identical);
-  // a lazy, entitlement-gated public source slots in behind the same interface.
-  const source = useMemo(() => createLibrarySource(chapters), [chapters]);
+  // The reader reads through a ChapterSource seam: the owner path wraps the
+  // in-memory book (peek resolves synchronously, so behavior is identical to
+  // before the seam existed), while a published series comes through a lazy,
+  // entitlement-gated source. Same view, different data.
+  const source = useMemo(
+    () => (publicSeries ? createPublicSource(publicSeries) : createLibrarySource(chapters ?? [])),
+    [chapters, publicSeries],
+  );
   const [chapterIndex, setChapterIndex] = useState(
     Math.min(initialPosition?.chapterIndex ?? 0, source.count - 1),
   );
@@ -207,7 +230,38 @@ export function Reader({
   const [ttsProgress, setTtsProgress] = useState<number>();
   const saveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
-  const chapter = source.peek(chapterIndex);
+  // The current chapter's body. The owner's is cached from the first render;
+  // a public chapter is fetched, so the view shows the chapter's shell (title,
+  // chrome, TOC) while the text is on its way.
+  const [chapter, setChapter] = useState<LoadedChapter | undefined>(() =>
+    source.peek(Math.min(initialPosition?.chapterIndex ?? 0, source.count - 1)),
+  );
+  const [loadingChapter, setLoadingChapter] = useState(false);
+  /** Bumped after a purchase, to re-read the chapter now that it's unlocked. */
+  const [chapterEpoch, setChapterEpoch] = useState(0);
+
+  useEffect(() => {
+    const cached = source.peek(chapterIndex);
+    if (cached) {
+      setChapter(cached);
+      setLoadingChapter(false);
+      source.prefetch(chapterIndex + 1);
+      return;
+    }
+    let cancelled = false;
+    setLoadingChapter(true);
+    void source.getChapter(chapterIndex).then((loaded) => {
+      if (cancelled) return;
+      setChapter(loaded);
+      setLoadingChapter(false);
+      source.prefetch(chapterIndex + 1);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [chapterIndex, chapterEpoch, source]);
+
+  const chapterTitle = chapter?.title ?? source.titles[chapterIndex] ?? '';
   const chapterText = useMemo(() => chapter?.paragraphs?.join('\n') ?? '', [chapter]);
   const chapterAnnotations = useMemo(
     () => annotations.filter((a) => a.locator.chapterIndex === chapterIndex),
@@ -396,6 +450,10 @@ export function Reader({
         }
         return prior;
       });
+      // An anonymous reader still gets the in-session "furthest point" chrome;
+      // only the server write needs a session (and is silent about it — being
+      // nagged to sign in for scrolling would be obnoxious).
+      if (!source.capabilities.canPersistPosition) return;
       if (saveTimer.current) clearTimeout(saveTimer.current);
       saveTimer.current = setTimeout(() => {
         void fetch(`/api/books/${book.id}/position`, {
@@ -405,16 +463,17 @@ export function Reader({
         }).catch(() => undefined);
       }, 800);
     },
-    [book.id, chapterIndex],
+    [book.id, chapterIndex, source],
   );
 
   const reloadAnnotations = useCallback(async () => {
+    if (!source.capabilities.canAnnotate) return;
     const response = await fetch(`/api/books/${book.id}/annotations`);
     if (response.ok) {
       const body = (await response.json()) as { annotations: Annotation[] };
       setAnnotations(body.annotations);
     }
-  }, [book.id]);
+  }, [book.id, source]);
 
   // --- Page view events ------------------------------------------------------
   // The view reports in chapter offsets; the chrome owns what they mean.
@@ -468,6 +527,10 @@ export function Reader({
   const createHighlight = useCallback(
     async (start: number, end: number, passage: string, color: HighlightColor, note?: string) => {
       if (!chapter) return;
+      // Annotating someone else's published book is fine (the row is yours) —
+      // but you have to be signed in, so an anonymous reader is prompted here
+      // rather than losing the highlight silently.
+      if (!source.requireAuth(note ? 'note' : 'highlight')) return;
       await fetch(`/api/books/${book.id}/annotations`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -478,12 +541,12 @@ export function Reader({
           passage,
           note,
           color,
-          chapterTitle: chapter.title,
+          chapterTitle,
         }),
       });
       await reloadAnnotations();
     },
-    [book.id, chapter, chapterIndex, reloadAnnotations],
+    [book.id, chapter, chapterIndex, chapterTitle, reloadAnnotations, source],
   );
 
   const addHighlight = useCallback(
@@ -614,7 +677,22 @@ export function Reader({
     ttsRef.current?.setRate(next);
   }, [rate]);
 
-  if (!chapter) return null;
+  // A source with no chapters at all (an empty book) has nothing to show.
+  if (source.count === 0) return null;
+
+  const { canComment } = source.capabilities;
+  /** Owner-only chrome: Notes and Voices are library tools, not reading tools. */
+  const isLibrary = !publicSeries;
+
+  // What "unlock the rest of the book" would cost from here — the paywall's
+  // second offer. Same pricing rules the server charges (core), so the quote
+  // and the charge can't drift.
+  const pricing = source.pricing;
+  const remainingBookCost = pricing
+    ? remainingUnlockCost(pricing, pricing.chapterCount, source.unlocked ?? [])
+    : 0;
+  const remainingLocked =
+    pricing && pricing.coinsPerChapter > 0 ? remainingBookCost / pricing.coinsPerChapter : 0;
 
   const themeColors = READER_THEMES[theme];
   const panelStyle = {
@@ -664,8 +742,8 @@ export function Reader({
         }`}
       >
         <div className="flex min-w-0 items-stretch">
-          <Link href="/library" onClick={teardownTts} className={`${chromeButton} shrink-0 font-medium`}>
-            ← Library
+          <Link href={backHref} onClick={teardownTts} className={`${chromeButton} shrink-0 font-medium`}>
+            ← {backLabel}
           </Link>
           <span className="flex items-center truncate px-1.5 font-semibold opacity-80">
             {book.title}
@@ -706,20 +784,29 @@ export function Reader({
           >
             Comments
           </button>
-          <Link href={`/notes/${book.id}`} onClick={teardownTts} className={chromeButton}>
-            Notes
-          </Link>
-          <Link href={`/voice/${book.id}`} onClick={teardownTts} className={chromeButton}>
-            Voices
-          </Link>
+          {isLibrary ? (
+            <>
+              <Link href={`/notes/${book.id}`} onClick={teardownTts} className={chromeButton}>
+                Notes
+              </Link>
+              <Link href={`/voice/${book.id}`} onClick={teardownTts} className={chromeButton}>
+                Voices
+              </Link>
+            </>
+          ) : (
+            <span className="flex items-center px-2.5 text-xs font-semibold opacity-70">
+              {source.wallet ? `${source.wallet.balance} coins` : null}
+            </span>
+          )}
         </div>
       </header>
 
       <CommentsDrawer
         bookId={book.id}
         chapterIndex={chapterIndex}
-        chapterTitle={chapter?.title ?? ''}
+        chapterTitle={chapterTitle}
         currentUserId={currentUserId}
+        canPost={canComment}
         open={commentsOpen}
         onClose={() => setCommentsOpen(false)}
         colors={{
@@ -735,7 +822,7 @@ export function Reader({
           chapter's own height wins and the whole window scrolls instead of the
           page. (The old iframe hid this — it never grew with its content.) */}
       <div className={`relative min-h-0 flex-1 ${ttsOpen ? 'pb-14' : ''}`}>
-        {chapter.paragraphs && !chapter.locked ? (
+        {chapter?.paragraphs && !chapter.locked ? (
           <ChapterView
             ref={viewRef}
             title={chapter.title}
@@ -752,6 +839,38 @@ export function Reader({
             onPageEdge={onPageEdge}
             onTap={onTapPage}
           />
+        ) : chapter?.locked ? (
+          // A locked chapter is a data state, not a different page: the reader
+          // keeps its chrome, TOC and theme, and the body is the paywall.
+          <div className="h-full overflow-y-auto px-6 py-10">
+            <div className="mx-auto max-w-md">
+              <h1 className="text-center font-serif text-2xl">{chapterTitle}</h1>
+              <ReaderPaywall
+                bookId={book.id}
+                chapterIndex={chapterIndex}
+                coinCost={chapter.coinCost}
+                signedIn={canComment}
+                balance={source.wallet?.balance ?? 0}
+                remainingCount={remainingLocked}
+                remainingBookCost={remainingBookCost}
+                colors={{
+                  bg: themeColors.bg,
+                  fg: themeColors.fg,
+                  accent: themeColors.accent,
+                  muted: mutedColor,
+                  border: panelStyle.borderColor,
+                }}
+                onUnlocked={async () => {
+                  await source.onUnlocked?.(chapterIndex);
+                  setChapterEpoch((epoch) => epoch + 1);
+                }}
+              />
+            </div>
+          </div>
+        ) : loadingChapter ? (
+          <div className="flex h-full items-center justify-center text-sm" style={{ color: mutedColor }}>
+            Opening {chapterTitle}…
+          </div>
         ) : null}
 
         {anyMenuOpen ? (
@@ -1313,7 +1432,7 @@ export function Reader({
           ‹ Prev
         </button>
         <span className="flex items-center truncate text-xs opacity-50">
-          {chapterIndex + 1} / {source.count} · {chapter.title}
+          {chapterIndex + 1} / {source.count} · {chapterTitle}
         </span>
         <button
           disabled={pagination === 'scroll' && chapterIndex >= source.count - 1}
