@@ -125,24 +125,22 @@ export function NativePagedView({
   );
 
   const goToPage = useCallback(
-    (next: number, report = true) => {
+    (next: number) => {
       const clamped = Math.max(0, Math.min(totalPages - 1, next));
       pageRef.current = clamped;
       setPage(clamped);
       scrollRef.current?.scrollTo({ y: clamped * pageStep, animated: true });
       // The top of the page is where reading has got to.
-      if (report && onOffsetChange) {
-        onOffsetChange(
-          modelOffsetForRendered(renderedStarts, renderedOffsetAtPage(clamped, metrics)),
-        );
-      }
+      onOffsetChange?.(
+        modelOffsetForRendered(renderedStarts, renderedOffsetAtPage(clamped, metrics)),
+      );
     },
     [totalPages, pageStep, onOffsetChange, renderedStarts, metrics],
   );
 
   // Open where reading stopped. Waits for layout (the page a character sits on
-  // is estimated from measured heights) and runs once per chapter — reporting
-  // the restored position back would just echo what the host already knows.
+  // is estimated from measured heights) and runs once per chapter. The landing
+  // reports back, which is how the "last page" sentinel becomes a real offset.
   const restoredRef = useRef(false);
   useEffect(() => {
     if (restoredRef.current || contentH === 0 || pageStep === 0) return;
@@ -156,7 +154,7 @@ export function NativePagedView({
             initialOffset,
           );
     const target = pageForRenderedOffset(rendered, metrics);
-    if (target > 0) goToPage(target, false);
+    if (target > 0) goToPage(target);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contentH, pageStep]);
 

@@ -797,6 +797,20 @@ function ReaderInner({
     [bookId, chapterIndex],
   );
 
+  // Opening a chapter is a position change in its own right. The renderers only
+  // report movement *within* a chapter, so without this, reading on to chapter
+  // three and closing the book would reopen it at chapter one — the renderer
+  // had nothing to report because it never moved. Whatever the renderer lands
+  // on (restored page, or the top) is reported right after and refines this.
+  useEffect(() => {
+    const offset = restoreOffsetRef.current;
+    void persistPosition({
+      bookId,
+      chapterIndex,
+      offset: offset >= Number.MAX_SAFE_INTEGER ? 0 : offset,
+    });
+  }, [bookId, chapterIndex]);
+
   // The paged renderer turns its own pages (edge taps, swipe) and calls back at
   // the chapter boundary, so the chrome's Prev/Next always mean "chapter".
   const turnOrGo = useCallback(
