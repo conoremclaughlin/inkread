@@ -47,6 +47,7 @@ import { TtsController } from '../tts/TtsController';
 import { resolveVoice, listVoices, QUALITY_LABEL, type VoiceOption } from '../tts/voices';
 import { ensureListeningAudioSession } from '../lib/audio';
 import { resetClientStore } from '../store/clientStore';
+import { foldExtendRange } from '../lib/extendRange';
 import { BottomSheet } from '../components/BottomSheet';
 import { NativeReaderView } from '../components/NativeReaderView';
 import { NativePagedView } from '../components/NativePagedView';
@@ -683,13 +684,18 @@ function ReaderInner({
   const handleNativeSelection = useCallback(
     (sel: { start: number; end: number; text: string } | undefined) => {
       if (extend && sel) {
-        setExtend((prev) => {
-          if (!prev) return prev;
-          const anchorEnd = prev.anchor + prev.anchorText.length;
-          const start = Math.min(prev.anchor, sel.start);
-          const end = Math.max(anchorEnd, sel.end);
-          return { ...prev, range: { start, end, text: chapterText.slice(start, end) } };
-        });
+        setExtend((prev) =>
+          prev
+            ? {
+                ...prev,
+                range: foldExtendRange(
+                  { start: prev.anchor, length: prev.anchorText.length },
+                  sel,
+                  chapterText,
+                ),
+              }
+            : prev,
+        );
       } else {
         setSelection(sel);
       }
