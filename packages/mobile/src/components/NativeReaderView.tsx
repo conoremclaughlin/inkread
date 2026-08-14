@@ -10,7 +10,13 @@ import {
   type TextStyle,
 } from 'react-native';
 import { UITextView } from '@bsky.app/react-native-uitextview';
-import { applyMark, segmentChapterRuns, type Annotation, type Run } from '@inkread/core';
+import {
+  applyMark,
+  segmentChapterRuns,
+  type Annotation,
+  type ReaderTheme,
+  type Run,
+} from '@inkread/core';
 import { renderRun } from './readerRuns';
 
 /**
@@ -42,6 +48,7 @@ export interface NativeReaderViewProps {
   background: string;
   /** Highlight fill opacity — the active theme's hlAlpha. */
   highlightAlpha: number;
+  theme: ReaderTheme;
   /** Character offset to restore to on open (top of viewport). */
   initialOffset?: number;
   /** The sentence TTS is speaking, as a chapter-relative range (read-along tint). */
@@ -70,6 +77,7 @@ interface ParagraphProps {
   mark?: { start: number; end: number };
   style: StyleProp<TextStyle>;
   highlightAlpha: number;
+  theme: ReaderTheme;
   onSelect: (paraIndex: number, base: number, event: SelectionEvent) => void;
   onTapHighlight: (id: string) => void;
   onLayoutY: (index: number, y: number) => void;
@@ -82,6 +90,7 @@ const MarkableParagraph = memo(function MarkableParagraph({
   mark,
   style,
   highlightAlpha,
+  theme,
   onSelect,
   onTapHighlight,
   onLayoutY,
@@ -95,7 +104,9 @@ const MarkableParagraph = memo(function MarkableParagraph({
         onSelectionChange={(e) => onSelect(index, base, e as SelectionEvent)}
         style={style}
       >
-        {marked.map((run, runIndex) => renderRun(run, String(runIndex), { highlightAlpha, onTapHighlight }))}
+        {marked.map((run, runIndex) =>
+          renderRun(run, String(runIndex), { highlightAlpha, theme, onTapHighlight }),
+        )}
       </UITextView>
     </View>
   );
@@ -110,6 +121,7 @@ export function NativeReaderView({
   color,
   background,
   highlightAlpha,
+  theme,
   initialOffset = 0,
   ttsMark,
   onSelection,
@@ -280,6 +292,7 @@ export function NativeReaderView({
             mark={mark}
             style={bodyStyle}
             highlightAlpha={highlightAlpha}
+            theme={theme}
             onSelect={handleSelect}
             onTapHighlight={onTapHighlight}
             onLayoutY={handleLayoutY}

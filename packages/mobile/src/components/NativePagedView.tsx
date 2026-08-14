@@ -8,7 +8,7 @@ import {
   type NativeSyntheticEvent,
 } from 'react-native';
 import { UITextView } from '@bsky.app/react-native-uitextview';
-import { applyMark, segmentChapterRuns, type Annotation } from '@inkread/core';
+import { applyMark, segmentChapterRuns, type Annotation, type ReaderTheme } from '@inkread/core';
 import {
   modelOffsetForRendered,
   pageForRenderedOffset,
@@ -44,6 +44,8 @@ export interface NativePagedViewProps {
   color: string;
   background: string;
   highlightAlpha: number;
+  /** Active reader theme — decides how a highlight fill is toned. */
+  theme: ReaderTheme;
   /** The sentence TTS is speaking, as a chapter-relative range (read-along tint). */
   ttsMark?: { start: number; end: number };
   /**
@@ -72,6 +74,7 @@ export function NativePagedView({
   color,
   background,
   highlightAlpha,
+  theme,
   ttsMark,
   initialOffset = 0,
   onSelection,
@@ -229,7 +232,7 @@ export function NativePagedView({
           {paras.flatMap(({ runs, start }, pIndex) => {
             const marked = applyMark(runs, start, ttsMark);
             const nodes = marked.map((run, rIndex) =>
-              renderRun(run, `${pIndex}:${rIndex}`, { highlightAlpha, onTapHighlight }),
+              renderRun(run, `${pIndex}:${rIndex}`, { highlightAlpha, theme, onTapHighlight }),
             );
             return pIndex < paras.length - 1
               ? [...nodes, <UITextView key={`nl:${pIndex}`}>{'\n\n'}</UITextView>]

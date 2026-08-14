@@ -858,6 +858,7 @@ function ReaderInner({
             color={panel.fg}
             background={panel.bg}
             highlightAlpha={Number(READER_THEMES[theme]?.hlAlpha ?? READER_THEMES.paper.hlAlpha)}
+            theme={theme}
             initialOffset={restoreOffsetRef.current}
             ttsMark={ttsMark}
             onSelection={handleNativeSelection}
@@ -878,6 +879,7 @@ function ReaderInner({
             color={panel.fg}
             background={panel.bg}
             highlightAlpha={Number(READER_THEMES[theme]?.hlAlpha ?? READER_THEMES.paper.hlAlpha)}
+            theme={theme}
             initialOffset={restoreOffsetRef.current}
             ttsMark={ttsMark}
             onSelection={handleNativeSelection}
