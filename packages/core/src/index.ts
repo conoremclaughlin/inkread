@@ -12,15 +12,13 @@ export {
 export { exportAnnotationsMarkdown, formatPassageShare } from './export/markdown';
 export { exportAnnotationsCsv } from './export/csv';
 export {
-  buildReaderHtml,
   highlightRgb,
   isDarkTheme,
   HIGHLIGHT_COLORS,
   READER_THEMES,
   type ReaderTheme,
   type ReaderThemeColors,
-  type ReaderSettings,
-} from './reader/html';
+} from './reader/theme';
 export { paginate, pageOfLine, type LineBox, type Page } from './reader/pagination';
 export {
   segmentParagraph,
