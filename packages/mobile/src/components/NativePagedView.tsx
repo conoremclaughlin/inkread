@@ -9,7 +9,13 @@ import {
 } from 'react-native';
 import { UITextView } from '@bsky.app/react-native-uitextview';
 import { applyMark, segmentChapterRuns, type Annotation } from '@inkread/core';
-import { modelOffsetForRendered, renderedParagraphStarts } from '../lib/pagedOffsets';
+import {
+  modelOffsetForRendered,
+  pageForRenderedOffset,
+  renderedOffsetAtPage,
+  renderedOffsetForModel,
+  renderedParagraphStarts,
+} from '../lib/pagedOffsets';
 import { renderRun } from './readerRuns';
 
 /**
@@ -40,10 +46,17 @@ export interface NativePagedViewProps {
   highlightAlpha: number;
   /** The sentence TTS is speaking, as a chapter-relative range (read-along tint). */
   ttsMark?: { start: number; end: number };
+  /**
+   * Where to open. Number.MAX_SAFE_INTEGER means "the last page" — how the
+   * reader flows in when you turn back into the previous chapter.
+   */
+  initialOffset?: number;
   onSelection: (selection: { start: number; end: number; text: string } | undefined) => void;
   onTapHighlight: (id: string) => void;
   onReachStart: () => void;
   onReachEnd: () => void;
+  /** The chapter offset now at the top of the page — the reading position. */
+  onOffsetChange?: (offset: number) => void;
   /** Reveal the chrome when the chapter opens (paged mode has no scroll signal). */
   onChromeVisibility?: (visible: boolean) => void;
 }
@@ -60,10 +73,12 @@ export function NativePagedView({
   background,
   highlightAlpha,
   ttsMark,
+  initialOffset = 0,
   onSelection,
   onTapHighlight,
   onReachStart,
   onReachEnd,
+  onOffsetChange,
   onChromeVisibility,
 }: NativePagedViewProps) {
   useEffect(() => {
@@ -99,15 +114,51 @@ export function NativePagedView({
   const pageStep = Math.max(lineHeight, Math.floor((viewportH - 24) / lineHeight) * lineHeight);
   const totalPages = Math.max(1, Math.ceil(contentH / pageStep));
 
+  const metrics = useMemo(
+    () => ({
+      renderedTotal: body.length + Math.max(0, paras.length - 1),
+      contentHeight: contentH,
+      pageStep,
+      totalPages,
+    }),
+    [body.length, paras.length, contentH, pageStep, totalPages],
+  );
+
   const goToPage = useCallback(
-    (next: number) => {
+    (next: number, report = true) => {
       const clamped = Math.max(0, Math.min(totalPages - 1, next));
       pageRef.current = clamped;
       setPage(clamped);
       scrollRef.current?.scrollTo({ y: clamped * pageStep, animated: true });
+      // The top of the page is where reading has got to.
+      if (report && onOffsetChange) {
+        onOffsetChange(
+          modelOffsetForRendered(renderedStarts, renderedOffsetAtPage(clamped, metrics)),
+        );
+      }
     },
-    [totalPages, pageStep],
+    [totalPages, pageStep, onOffsetChange, renderedStarts, metrics],
   );
+
+  // Open where reading stopped. Waits for layout (the page a character sits on
+  // is estimated from measured heights) and runs once per chapter — reporting
+  // the restored position back would just echo what the host already knows.
+  const restoredRef = useRef(false);
+  useEffect(() => {
+    if (restoredRef.current || contentH === 0 || pageStep === 0) return;
+    restoredRef.current = true;
+    if (initialOffset <= 0) return;
+    const rendered =
+      initialOffset >= Number.MAX_SAFE_INTEGER
+        ? Number.MAX_SAFE_INTEGER
+        : renderedOffsetForModel(
+            paras.map((p) => p.start),
+            initialOffset,
+          );
+    const target = pageForRenderedOffset(rendered, metrics);
+    if (target > 0) goToPage(target, false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [contentH, pageStep]);
 
   const turn = (delta: number) => {
     const next = page + delta;
@@ -136,10 +187,8 @@ export function NativePagedView({
   // that page. Reads `pageRef` rather than `page` so a manual turn isn't undone.
   useEffect(() => {
     if (!ttsMark || contentH === 0 || pageStep === 0) return;
-    const renderedTotal = body.length + Math.max(0, paras.length - 1);
     const renderedMarkStart = ttsMark.start + paraIndexForOffset(ttsMark.start);
-    const estY = (renderedMarkStart / Math.max(1, renderedTotal)) * contentH;
-    const target = Math.max(0, Math.min(totalPages - 1, Math.floor(estY / pageStep)));
+    const target = pageForRenderedOffset(renderedMarkStart, metrics);
     if (target !== pageRef.current) goToPage(target);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ttsMark, contentH, pageStep]);

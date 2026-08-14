@@ -844,11 +844,13 @@ function ReaderInner({
             color={panel.fg}
             background={panel.bg}
             highlightAlpha={Number(READER_THEMES[theme]?.hlAlpha ?? READER_THEMES.paper.hlAlpha)}
+            initialOffset={restoreOffsetRef.current}
             ttsMark={ttsMark}
             onSelection={handleNativeSelection}
             onTapHighlight={handleTapHighlight}
             onReachStart={() => goToChapter(chapterIndex - 1, Number.MAX_SAFE_INTEGER)}
             onReachEnd={() => goToChapter(chapterIndex + 1)}
+            onOffsetChange={recordOffset}
             onChromeVisibility={setChromeVisible}
           />
         ) : (
