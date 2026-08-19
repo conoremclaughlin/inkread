@@ -12,18 +12,20 @@ export {
 export { exportAnnotationsMarkdown, formatPassageShare } from './export/markdown';
 export { exportAnnotationsCsv } from './export/csv';
 export {
-  buildReaderHtml,
+  highlightRgb,
+  isDarkTheme,
   HIGHLIGHT_COLORS,
   READER_THEMES,
   type ReaderTheme,
   type ReaderThemeColors,
-  type ReaderSettings,
-} from './reader/html';
+} from './reader/theme';
 export { paginate, pageOfLine, type LineBox, type Page } from './reader/pagination';
 export {
   segmentParagraph,
   segmentChapterRuns,
+  applyMark,
   type Run,
+  type MarkedRun,
   type ParagraphRuns,
 } from './reader/runs';
 export {
@@ -36,6 +38,15 @@ export {
   type AttributedSegment,
   type AttributedSentence,
 } from './voices/cast';
+export { isActivelyPublished, rankByScore, type Rankable } from './social/publishing';
+export {
+  isChapterFree,
+  chapterCoinCost,
+  paidChapterCount,
+  bookListPrice,
+  remainingUnlockCost,
+  type BookPricing,
+} from './social/pricing';
 export { splitSentences, type Sentence } from './tts/sentences';
 export { encodeWav, pcmDurationSeconds } from './audio/wav';
 export { textToChapters, type TextToChaptersOptions } from './text/segment';

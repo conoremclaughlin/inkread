@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { SupabaseLibraryRepository } from './supabase-repository';
+import { getPublicChapter, getPublicSeries, listActiveSeries } from './public';
 
 /**
  * Integration test against the local Supabase stack: real Postgres, real
@@ -274,6 +275,148 @@ describe.skipIf(!up)('SupabaseLibraryRepository (integration)', () => {
     // The author can delete their own comment.
     await repository.deleteComment(comment.id);
     expect(await repository.listComments(book.id, 0)).toHaveLength(0);
+
+    await repository.deleteBook(book.id);
+  });
+
+  it('publishes a book, tallies comment votes, and exposes it to the public anon reads', async () => {
+    const book = await repository.createBook({
+      title: 'Serial X',
+      source: 'text',
+      chapters: [{ title: 'One', paragraphs: ['A chapter to discuss.'] }],
+    });
+
+    // Private → invisible to the anon (public) read path.
+    expect(await getPublicSeries(book.id)).toBeUndefined();
+
+    await repository.setBookPublication(book.id, { visibility: 'public', status: 'ongoing' });
+    expect((await listActiveSeries()).map((s) => s.id)).toContain(book.id);
+
+    const comment = await repository.createComment({
+      bookId: book.id,
+      chapterIndex: 0,
+      body: 'Great opener.',
+    });
+
+    // A second reader votes on the public comment.
+    const otherEmail = `repo-test-vote-${Math.random().toString(36).slice(2, 10)}@inkread.test`;
+    const { data: other, error } = await admin.auth.admin.createUser({
+      email: otherEmail,
+      password: 'integration-test-pw',
+      email_confirm: true,
+    });
+    if (error) throw error;
+    try {
+      const otherClient = createClient(SUPABASE_URL, PUBLISHABLE_KEY, {
+        auth: { persistSession: false },
+      });
+      await otherClient.auth.signInWithPassword({
+        email: otherEmail,
+        password: 'integration-test-pw',
+      });
+      const otherRepo = new SupabaseLibraryRepository(otherClient, other.user.id);
+
+      // Two upvotes → score 2 (trigger keeps the denormalized tallies in step).
+      await repository.voteOnComment(comment.id, 1);
+      await otherRepo.voteOnComment(comment.id, 1);
+      let detail = await getPublicSeries(book.id);
+      expect(detail?.comments[0]).toMatchObject({ score: 2, upvotes: 2, downvotes: 0 });
+      expect(await repository.listMyVotes([comment.id])).toEqual({ [comment.id]: 1 });
+
+      // Owner switches to a downvote → up 1, down 1, score 0.
+      await repository.voteOnComment(comment.id, -1);
+      expect((await repository.listMyVotes([comment.id]))[comment.id]).toBe(-1);
+      detail = await getPublicSeries(book.id);
+      expect(detail?.comments[0]).toMatchObject({ score: 0, upvotes: 1, downvotes: 1 });
+
+      // Owner clears their vote → only the reader's upvote remains, score 1.
+      await repository.voteOnComment(comment.id, 0);
+      expect(await repository.listMyVotes([comment.id])).toEqual({});
+      detail = await getPublicSeries(book.id);
+      expect(detail?.comments[0]).toMatchObject({ score: 1, upvotes: 1, downvotes: 0 });
+    } finally {
+      await admin.auth.admin.deleteUser(other.user.id);
+    }
+
+    await repository.deleteBook(book.id);
+  });
+
+  it('gates paid chapters behind coin unlocks and shares revenue with the author', async () => {
+    const author = await repository.getWallet();
+    const book = await repository.createBook({
+      title: 'Paywalled Serial',
+      source: 'text',
+      chapters: [
+        { title: 'Free One', paragraphs: ['Free bait.'] },
+        { title: 'Paid Two', paragraphs: ['Locked gold.'] },
+        { title: 'Paid Three', paragraphs: ['More locked gold.'] },
+      ],
+    });
+    // Publish and price it: chapter 0 free, chapters 1–2 cost 10 coins each.
+    await repository.setBookPublication(book.id, {
+      visibility: 'public',
+      status: 'ongoing',
+      freeChapterCount: 1,
+      coinsPerChapter: 10,
+    });
+    const series = await getPublicSeries(book.id);
+    expect(series?.series).toMatchObject({ freeChapterCount: 1, coinsPerChapter: 10 });
+
+    // Anonymous visitor: free head readable, paid chapter withheld.
+    expect((await getPublicChapter(book.id, 0))?.paragraphs).toEqual(['Free bait.']);
+    const anonLocked = await getPublicChapter(book.id, 1);
+    expect(anonLocked).toMatchObject({ locked: true, coinCost: 10 });
+    expect(anonLocked?.paragraphs).toBeUndefined();
+
+    const readerEmail = `repo-test-coins-${Math.random().toString(36).slice(2, 10)}@inkread.test`;
+    const { data: reader, error } = await admin.auth.admin.createUser({
+      email: readerEmail,
+      password: 'integration-test-pw',
+      email_confirm: true,
+    });
+    if (error) throw error;
+    try {
+      const readerClient = createClient(SUPABASE_URL, PUBLISHABLE_KEY, {
+        auth: { persistSession: false },
+      });
+      await readerClient.auth.signInWithPassword({
+        email: readerEmail,
+        password: 'integration-test-pw',
+      });
+      const readerRepo = new SupabaseLibraryRepository(readerClient, reader.user.id);
+
+      // New readers get the demo signup grant.
+      expect((await readerRepo.getWallet()).balance).toBe(100);
+
+      // A paid chapter is locked until purchased.
+      expect(await readerRepo.readChapter(book.id, 1)).toMatchObject({
+        locked: true,
+        coinCost: 10,
+        paragraphs: undefined,
+      });
+
+      const bought = await readerRepo.unlockChapter(book.id, 1);
+      expect(bought).toMatchObject({ coinsSpent: 10, balance: 90 });
+      expect(bought.unlocked).toContain(1);
+      expect(await readerRepo.listMyUnlocks(book.id)).toEqual([1]);
+
+      // Now the body flows through the gate.
+      expect((await readerRepo.readChapter(book.id, 1))?.paragraphs).toEqual(['Locked gold.']);
+
+      // Re-buying is free; buying the book only charges the still-locked ch2.
+      expect((await readerRepo.unlockChapter(book.id, 1)).coinsSpent).toBe(0);
+      const rest = await readerRepo.unlockBook(book.id);
+      expect(rest).toMatchObject({ coinsSpent: 10, balance: 80 });
+      expect(rest.unlocked).toEqual([1, 2]);
+
+      // Demo top-up mints coins into the wallet.
+      expect(await readerRepo.topUpDemo(50)).toBe(130);
+
+      // The author earned the 20 coins the reader spent (demo revenue share).
+      expect((await repository.getWallet()).balance).toBe(author.balance + 20);
+    } finally {
+      await admin.auth.admin.deleteUser(reader.user.id);
+    }
 
     await repository.deleteBook(book.id);
   });

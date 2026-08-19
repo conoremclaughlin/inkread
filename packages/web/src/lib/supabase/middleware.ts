@@ -1,11 +1,13 @@
 import { createServerClient } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
 
-const PUBLIC_PATHS = ['/login', '/signup', '/auth'];
+// Auth pages + the public discovery surface (home and series pages) are open to
+// everyone; the personal library and reader still require a session.
+const PUBLIC_PATHS = ['/login', '/signup', '/auth', '/series', '/browse'];
 
 /**
- * Refreshes session tokens on every request and gates the app: the reader
- * is personal, so everything except the auth pages requires a session.
+ * Refreshes session tokens on every request and gates the app: the public
+ * discovery pages and auth pages are open, everything else needs a session.
  */
 export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
@@ -44,7 +46,7 @@ export async function updateSession(request: NextRequest) {
   }
 
   const { pathname } = request.nextUrl;
-  const isPublic = PUBLIC_PATHS.some((p) => pathname.startsWith(p));
+  const isPublic = pathname === '/' || PUBLIC_PATHS.some((p) => pathname.startsWith(p));
 
   if (!user && !isPublic && !pathname.startsWith('/api')) {
     const url = request.nextUrl.clone();

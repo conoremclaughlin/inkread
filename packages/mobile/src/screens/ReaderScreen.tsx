@@ -13,9 +13,9 @@ import {
   View,
   type ViewStyle,
 } from 'react-native';
-import { StatusBar } from 'expo-status-bar';
+import { setStatusBarStyle, type StatusBarStyle } from 'expo-status-bar';
+import { useFocusEffect } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 import {
   formatPassageShare,
   type Annotation,
@@ -24,7 +24,6 @@ import {
 } from '@inkread/core';
 import type { RootStackParamList } from '../navigation';
 import {
-  buildReaderHtml,
   HIGHLIGHT_COLORS,
   READER_THEMES,
   type ReaderTheme,
@@ -48,7 +47,10 @@ import { TtsController } from '../tts/TtsController';
 import { resolveVoice, listVoices, QUALITY_LABEL, type VoiceOption } from '../tts/voices';
 import { ensureListeningAudioSession } from '../lib/audio';
 import { resetClientStore } from '../store/clientStore';
+import { foldExtendRange } from '../lib/extendRange';
 import { BottomSheet } from '../components/BottomSheet';
+import { NativeReaderView } from '../components/NativeReaderView';
+import { NativePagedView } from '../components/NativePagedView';
 import { colors } from '../ui/theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -58,7 +60,7 @@ interface Selection {
   start: number;
   end: number;
   text: string;
-  /** Selection bounds in WebView viewport space, for placing the action bar. */
+  /** Selection bounds in reader viewport space, for placing the action bar. */
   top?: number;
   bottom?: number;
 }
@@ -306,6 +308,9 @@ function ReaderInner({
   const [settingsVisible, setSettingsVisible] = useState(false);
   const [ttsVisible, setTtsVisible] = useState(false);
   const [ttsPlaying, setTtsPlaying] = useState(false);
+  // The sentence TTS is speaking, as a chapter-relative range. Drives the native
+  // reader's read-along tint (the paragraph re-renders with that run marked).
+  const [ttsMark, setTtsMark] = useState<{ start: number; end: number } | undefined>();
   const [ttsRate, setTtsRate] = useState(preferences.ttsRate ?? 1.0);
   const [ttsVoiceId, setTtsVoiceId] = useState<string | undefined>(preferences.ttsVoice);
   const [voiceSheetVisible, setVoiceSheetVisible] = useState(false);
@@ -314,7 +319,6 @@ function ReaderInner({
   // that space (rather than let the bar overlap the last lines of the chapter).
   const [ttsBarHeight, setTtsBarHeight] = useState(0);
 
-  const webviewRef = useRef<WebView>(null);
   const restoreOffsetRef = useRef(initialPosition?.offset ?? 0);
   const ttsRef = useRef<TtsController | undefined>(undefined);
   const autoAdvanceRef = useRef(false);
@@ -329,6 +333,30 @@ function ReaderInner({
 
   const insets = useSafeAreaInsets();
   const panel = useMemo(() => panelFor(theme), [theme]);
+
+  // Keep the iOS status-bar icons (clock, signal, battery) legible against the
+  // reader theme. This app sets UIViewControllerBasedStatusBarAppearance = NO,
+  // so the status bar is driven by the app-level API rather than per-screen —
+  // and the reader is a full-screen modal — which makes the declarative
+  // <StatusBar> unreliable across the present/dismiss transition. Drive it
+  // imperatively: light icons on a dark theme, dark icons on a light one.
+  const statusStyle: StatusBarStyle = panel.dark ? 'light' : 'dark';
+  // Follow theme changes while the reader is on screen (no flicker: the focus
+  // effect below has empty deps, so only this runs on a theme switch).
+  useEffect(() => {
+    setStatusBarStyle(statusStyle, true);
+  }, [statusStyle]);
+  // Re-assert on every focus (entering the reader, or returning from Notes),
+  // reading the current theme via a ref; restore the app's default dark icons
+  // for the always-light rest of the app when the reader loses focus.
+  const statusStyleRef = useRef<StatusBarStyle>(statusStyle);
+  statusStyleRef.current = statusStyle;
+  useFocusEffect(
+    useCallback(() => {
+      setStatusBarStyle(statusStyleRef.current, true);
+      return () => setStatusBarStyle('dark', true);
+    }, []),
+  );
   // Theme-reactive chrome + safe-area padding, applied over the layout styles.
   const dyn = useMemo(
     () => ({
@@ -354,14 +382,14 @@ function ReaderInner({
 
   // Place the selection action bar just below the selected text — flipping above
   // near the bottom edge — so it never covers what you're annotating. Falls back
-  // to a fixed lower spot if the WebView didn't report selection bounds.
+  // to a fixed lower spot when the renderer reports no selection bounds.
   const selectionBarPosition = useMemo((): ViewStyle => {
     if (!selection || selection.top == null || selection.bottom == null) {
       return { bottom: 84 + insets.bottom };
     }
     const GAP = 10;
     const BAR_HEIGHT = 56;
-    const viewportTop = insets.top; // the WebView starts below the safe-area top
+    const viewportTop = insets.top; // the reader starts below the safe-area top
     const screenHeight = Dimensions.get('window').height;
     const below = viewportTop + selection.bottom + GAP;
     if (below + BAR_HEIGHT <= screenHeight - insets.bottom - 8) return { top: below };
@@ -397,14 +425,6 @@ function ReaderInner({
     [annotations, chapterIndex],
   );
 
-  const html = useMemo(
-    () =>
-      chapter
-        ? buildReaderHtml(chapter, chapterAnnotations, { theme, fontSize, pagination })
-        : '',
-    [chapter, chapterAnnotations, theme, fontSize, pagination],
-  );
-
   // Persist reading settings (debounced) so they follow the user across devices.
   const prefsLoaded = useRef(false);
   useEffect(() => {
@@ -433,9 +453,10 @@ function ReaderInner({
     tts.setListener((status) => {
       setTtsPlaying(status.playing);
       if (status.sentence && status.playing) {
-        webviewRef.current?.injectJavaScript(
-          `window.__reader && window.__reader.markSentence(${status.sentence.start}, ${status.sentence.end});true;`,
-        );
+        const { start, end } = status.sentence;
+        // The reader follows the mark through state: the paragraph holding
+        // the spoken sentence re-renders with that run tinted.
+        setTtsMark({ start, end });
       }
       // Ran off the end of the chapter → advance and keep reading. Note the
       // terminal notification carries playing:false (speakCurrent clears it),
@@ -463,6 +484,9 @@ function ReaderInner({
 
   useEffect(() => {
     const tts = getTts();
+    // The mark is chapter-relative; drop the old chapter's before the new one
+    // renders so it can't tint the wrong text (the next spoken sentence resets it).
+    setTtsMark(undefined);
     const offset =
       restoreOffsetRef.current >= Number.MAX_SAFE_INTEGER
         ? Math.max(0, chapterText.length - 1)
@@ -539,9 +563,7 @@ function ReaderInner({
   const closeTts = useCallback(() => {
     getTts().stop();
     setTtsVisible(false);
-    webviewRef.current?.injectJavaScript(
-      'window.__reader && window.__reader.clearSentence();true;',
-    );
+    setTtsMark(undefined);
   }, [getTts]);
 
   const toggleTtsPlay = useCallback(() => {
@@ -622,14 +644,10 @@ function ReaderInner({
       anchorText: selection.text,
       range: { start: selection.start, end: selection.end, text: selection.text },
     });
-    webviewRef.current?.injectJavaScript(
-      `window.__reader && window.__reader.beginExtend(${selection.start}, ${selection.end});true;`,
-    );
     setSelection(undefined);
   }, [selection]);
 
   const cancelExtend = useCallback(() => {
-    webviewRef.current?.injectJavaScript('window.__reader && window.__reader.endExtend();true;');
     setExtend(undefined);
   }, []);
 
@@ -637,7 +655,6 @@ function ReaderInner({
     (color: HighlightColor) => {
       const range = extend?.range;
       if (!range || !chapter) return;
-      webviewRef.current?.injectJavaScript('window.__reader && window.__reader.endExtend();true;');
       setExtend(undefined);
       void createAnnotation(bookId, {
         chapterIndex,
@@ -659,6 +676,32 @@ function ReaderInner({
       if (note !== null) addHighlight('yellow', note.trim() || undefined);
     });
   }, [addHighlight, selection]);
+
+  // Native reader selection. In extend mode a *second* native selection marks
+  // the far end of the highlight, so the range spans from the anchor to it —
+  // selection all the way, no tap-the-end-word offset probing.
+  // Otherwise the selection just drives the action bar.
+  const handleNativeSelection = useCallback(
+    (sel: { start: number; end: number; text: string } | undefined) => {
+      if (extend && sel) {
+        setExtend((prev) =>
+          prev
+            ? {
+                ...prev,
+                range: foldExtendRange(
+                  { start: prev.anchor, length: prev.anchorText.length },
+                  sel,
+                  chapterText,
+                ),
+              }
+            : prev,
+        );
+      } else {
+        setSelection(sel);
+      }
+    },
+    [extend, chapterText],
+  );
 
   const sharePassage = useCallback(
     (passage: string, note?: string) => {
@@ -735,97 +778,46 @@ function ReaderInner({
     [chapters.length],
   );
 
-  // --- WebView bridge ------------------------------------------------------
-  const handleMessage = useCallback(
-    (event: WebViewMessageEvent) => {
-      let msg: { type: string; [key: string]: unknown };
-      try {
-        msg = JSON.parse(event.nativeEvent.data) as typeof msg;
-      } catch {
-        return;
-      }
-      switch (msg.type) {
-        case 'ready':
-          if (restoreOffsetRef.current > 0) {
-            webviewRef.current?.injectJavaScript(
-              `window.__reader.scrollToOffset(${restoreOffsetRef.current});true;`,
-            );
-          }
-          break;
-        case 'selection':
-          if (msg.clear) {
-            setSelection(undefined);
-          } else {
-            setSelection({
-              start: Number(msg.start),
-              end: Number(msg.end),
-              text: String(msg.text ?? ''),
-              top: typeof msg.top === 'number' ? msg.top : undefined,
-              bottom: typeof msg.bottom === 'number' ? msg.bottom : undefined,
-            });
-          }
-          break;
-        case 'extendPoint':
-          setExtend((prev) =>
-            prev
-              ? {
-                  ...prev,
-                  range: {
-                    start: Number(msg.start),
-                    end: Number(msg.end),
-                    text: String(msg.text ?? ''),
-                  },
-                }
-              : prev,
-          );
-          break;
-        case 'scroll': {
-          const offset = Number(msg.offset) || 0;
-          restoreOffsetRef.current = offset;
-          // Reading moved while TTS was paused → the queue is stale; the
-          // next play picks up from here instead of the old sentence.
-          if (ttsRef.current && !ttsRef.current.status.playing) ttsStaleRef.current = true;
-          setFurthest((prior) => {
-            if (
-              !prior ||
-              chapterIndex > prior.chapterIndex ||
-              (chapterIndex === prior.chapterIndex && offset > prior.offset)
-            ) {
-              return { chapterIndex, offset };
-            }
-            return prior;
-          });
-          void persistPosition({ bookId, chapterIndex, offset });
-          break;
-        }
-        case 'pageEdge':
-          // Page turn past the chapter boundary → flow into the neighbor,
-          // landing on its last page when going backwards.
-          if (msg.dir === 'next') goToChapter(chapterIndex + 1);
-          else goToChapter(chapterIndex - 1, Number.MAX_SAFE_INTEGER);
-          break;
-        case 'tapHighlight':
-          handleTapHighlight(String(msg.id));
-          break;
-        case 'tap':
-          setChromeVisible((visible) => !visible);
-          break;
-      }
+  // Reading position moved (the reader's
+  // scroll): cache it, mark the TTS queue stale if paused, advance the furthest
+  // mark, and persist best-effort. Shared so both engines behave identically.
+  const recordOffset = useCallback(
+    (offset: number) => {
+      restoreOffsetRef.current = offset;
+      if (ttsRef.current && !ttsRef.current.status.playing) ttsStaleRef.current = true;
+      setFurthest((prior) =>
+        !prior ||
+        chapterIndex > prior.chapterIndex ||
+        (chapterIndex === prior.chapterIndex && offset > prior.offset)
+          ? { chapterIndex, offset }
+          : prior,
+      );
+      void persistPosition({ bookId, chapterIndex, offset });
     },
-    [bookId, chapterIndex, goToChapter, handleTapHighlight],
+    [bookId, chapterIndex],
   );
 
+  // Opening a chapter is a position change in its own right. The renderers only
+  // report movement *within* a chapter, so without this, reading on to chapter
+  // three and closing the book would reopen it at chapter one — the renderer
+  // had nothing to report because it never moved. Whatever the renderer lands
+  // on (restored page, or the top) is reported right after and refines this.
+  useEffect(() => {
+    const offset = restoreOffsetRef.current;
+    void persistPosition({
+      bookId,
+      chapterIndex,
+      offset: offset >= Number.MAX_SAFE_INTEGER ? 0 : offset,
+    });
+  }, [bookId, chapterIndex]);
+
+  // The paged renderer turns its own pages (edge taps, swipe) and calls back at
+  // the chapter boundary, so the chrome's Prev/Next always mean "chapter".
   const turnOrGo = useCallback(
     (delta: number) => {
-      if (pagination === 'paged') {
-        webviewRef.current?.injectJavaScript(
-          `window.__reader && window.__reader.turnPage(${delta});true;`,
-        );
-      } else {
-        goToChapter(chapterIndex + delta, delta < 0 ? Number.MAX_SAFE_INTEGER : 0);
-      }
+      goToChapter(chapterIndex + delta, delta < 0 ? Number.MAX_SAFE_INTEGER : 0);
     },
-    [chapterIndex, goToChapter, pagination],
+    [chapterIndex, goToChapter],
   );
 
   if (!book || !chapter) {
@@ -836,29 +828,66 @@ function ReaderInner({
     );
   }
 
-  const prevDisabled = pagination === 'scroll' && chapterIndex === 0;
-  const nextDisabled = pagination === 'scroll' && chapterIndex >= chapters.length - 1;
+  const prevDisabled = chapterIndex === 0;
+  const nextDisabled = chapterIndex >= chapters.length - 1;
   const currentVoiceName =
     voices.find((v) => v.identifier === ttsVoiceId)?.name ??
     (ttsVoiceId ? 'Selected voice' : 'Automatic');
 
   return (
     <View style={[styles.screen, { backgroundColor: panel.bg }]}>
-      <StatusBar style={panel.dark ? 'light' : 'dark'} />
+      {/* Status-bar style is driven imperatively above (setStatusBarStyle),
+          which survives the modal present/dismiss transition reliably. */}
       {/* Reserve room for the Listen transport so it lifts the text off the
           bottom instead of covering the final lines. The chapter-nav bar stays
           an overlay — it's transient chrome that fades, not a persistent panel. */}
       <View
         style={{ flex: 1, paddingTop: insets.top, paddingBottom: ttsVisible ? ttsBarHeight : 0 }}
       >
-        <WebView
-          ref={webviewRef}
-          source={{ html }}
-          originWhitelist={['*']}
-          onMessage={handleMessage}
-          menuItems={[]}
-          style={styles.webview}
-        />
+        {/* The reader: pure React Native. Native selection reports chapter
+            offsets, highlights come from core's shared run segmentation, and
+            the TTS read-along mark rides the same runs. */}
+        {pagination === 'paged' ? (
+          <NativePagedView
+            key={chapterIndex}
+            paragraphs={chapter.paragraphs}
+            title={chapter.title}
+            annotations={chapterAnnotations}
+            fontSize={fontSize}
+            lineHeight={Math.round(fontSize * 1.55)}
+            color={panel.fg}
+            background={panel.bg}
+            highlightAlpha={Number(READER_THEMES[theme]?.hlAlpha ?? READER_THEMES.paper.hlAlpha)}
+            theme={theme}
+            initialOffset={restoreOffsetRef.current}
+            ttsMark={ttsMark}
+            onSelection={handleNativeSelection}
+            onTapHighlight={handleTapHighlight}
+            onReachStart={() => goToChapter(chapterIndex - 1, Number.MAX_SAFE_INTEGER)}
+            onReachEnd={() => goToChapter(chapterIndex + 1)}
+            onOffsetChange={recordOffset}
+            onChromeVisibility={setChromeVisible}
+          />
+        ) : (
+          <NativeReaderView
+            key={chapterIndex}
+            paragraphs={chapter.paragraphs}
+            title={chapter.title}
+            annotations={chapterAnnotations}
+            fontSize={fontSize}
+            lineHeight={Math.round(fontSize * 1.55)}
+            color={panel.fg}
+            background={panel.bg}
+            highlightAlpha={Number(READER_THEMES[theme]?.hlAlpha ?? READER_THEMES.paper.hlAlpha)}
+            theme={theme}
+            initialOffset={restoreOffsetRef.current}
+            ttsMark={ttsMark}
+            onSelection={handleNativeSelection}
+            onTapHighlight={handleTapHighlight}
+            onOffsetChange={recordOffset}
+            onChromeVisibility={setChromeVisible}
+          />
+        )}
       </View>
 
       {/* Top bar: close (X) on the left, actions on the right. Fades with chrome. */}
@@ -976,30 +1005,25 @@ function ReaderInner({
           <Pressable hitSlop={8} onPress={promptNote}>
             <Text style={[styles.selectionAction, dyn.accentText]}>Note</Text>
           </Pressable>
+          {/* Extend: anchor here, then select the far end — handleNativeSelection
+              folds the second selection into the pending range. */}
           <Pressable hitSlop={8} onPress={startExtend}>
             <Text style={[styles.selectionAction, dyn.accentText]}>Extend</Text>
           </Pressable>
         </View>
       ) : null}
 
-      {/* Extend mode: the bar stays put at the bottom while you flip pages (edge
-          taps when paged, scroll otherwise) and tap where the highlight ends. */}
+      {/* Extend mode: the bar stays put at the bottom while you move to the far
+          end of the passage (turning pages or scrolling) and select it. */}
       {extend ? (
         <View
           style={[styles.extendWrap, { bottom: 84 + insets.bottom }]}
           pointerEvents="box-none"
         >
           <Text style={[styles.extendHint, dyn.pill, dyn.mutedText]}>
-            {pagination === 'paged'
-              ? 'Tap the last word · use ‹ › to change pages · then pick a colour'
-              : 'Scroll to the last word, then pick a colour'}
+            Select where the highlight ends, then pick a colour
           </Text>
           <View style={[styles.extendBar, dyn.pill]}>
-            {pagination === 'paged' ? (
-              <Pressable hitSlop={10} onPress={() => turnOrGo(-1)}>
-                <Text style={[styles.extendPage, dyn.accentText]}>‹</Text>
-              </Pressable>
-            ) : null}
             {(Object.keys(HIGHLIGHT_COLORS) as HighlightColor[]).map((color) => (
               <Pressable
                 key={color}
@@ -1007,11 +1031,6 @@ function ReaderInner({
                 onPress={() => confirmExtend(color)}
               />
             ))}
-            {pagination === 'paged' ? (
-              <Pressable hitSlop={10} onPress={() => turnOrGo(1)}>
-                <Text style={[styles.extendPage, dyn.accentText]}>›</Text>
-              </Pressable>
-            ) : null}
             <Pressable hitSlop={8} onPress={cancelExtend}>
               <Text style={[styles.selectionAction, dyn.accentText]}>Cancel</Text>
             </Pressable>
@@ -1209,7 +1228,6 @@ function ReaderInner({
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.bg },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  webview: { flex: 1, backgroundColor: 'transparent' },
   topBar: {
     position: 'absolute',
     top: 0,

@@ -2,14 +2,19 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type {
   Annotation,
   AnnotationKind,
+  BookVisibility,
   Chapter,
   ChapterRecording,
   Comment,
   HighlightColor,
+  PublicationStatus,
+  PurchaseResult,
+  ReadChapter,
   ReadingPosition,
   Speaker,
   VoiceCast,
   VoiceRule,
+  Wallet,
 } from '@inkread/core';
 import type {
   BookSummary,
@@ -34,6 +39,10 @@ interface BookRow {
   language: string;
   source: string;
   chapter_count: number;
+  visibility: string;
+  status: string;
+  free_chapter_count: number;
+  coins_per_chapter: number;
   created_at: string;
   updated_at: string;
 }
@@ -59,6 +68,10 @@ function rowToBook(row: BookRow): BookSummary {
     author: row.author ?? undefined,
     language: row.language,
     source: row.source as BookSummary['source'],
+    visibility: (row.visibility as BookVisibility) ?? 'private',
+    status: (row.status as PublicationStatus) ?? 'ongoing',
+    freeChapterCount: row.free_chapter_count ?? 0,
+    coinsPerChapter: row.coins_per_chapter ?? 0,
     chapterCount: row.chapter_count,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -121,6 +134,38 @@ function rowToRecording(row: RecordingRow): ChapterRecording {
   };
 }
 
+interface PurchaseRow {
+  unlocked: number[] | null;
+  coins_spent: number;
+  balance: number;
+}
+
+function rowToPurchase(row: PurchaseRow): PurchaseResult {
+  return {
+    unlocked: row.unlocked ?? [],
+    coinsSpent: row.coins_spent,
+    balance: row.balance,
+  };
+}
+
+interface ReadChapterRow {
+  chapter_index: number;
+  title: string;
+  paragraphs: string[] | null;
+  locked: boolean;
+  coin_cost: number;
+}
+
+function rowToReadChapter(row: ReadChapterRow): ReadChapter {
+  return {
+    chapterIndex: row.chapter_index,
+    title: row.title,
+    paragraphs: row.paragraphs ?? undefined,
+    locked: row.locked,
+    coinCost: row.coin_cost,
+  };
+}
+
 export class SupabaseLibraryRepository implements LibraryRepository {
   constructor(
     private readonly supabase: SupabaseClient,
@@ -150,9 +195,13 @@ export class SupabaseLibraryRepository implements LibraryRepository {
   }
 
   async listBooks(): Promise<BookSummary[]> {
+    // Scope to the owner explicitly: books now carry a public-read RLS policy
+    // (for the discovery site), so relying on RLS alone would surface everyone
+    // else's published books in this personal library.
     const { data, error } = await this.supabase
       .from('books')
       .select('*')
+      .eq('user_id', this.userId)
       .order('created_at', { ascending: false });
     if (error) this.fail('listBooks', error);
     return (data as BookRow[]).map(rowToBook);
@@ -412,6 +461,124 @@ export class SupabaseLibraryRepository implements LibraryRepository {
     // RLS enforces author-only deletion.
     const { error } = await this.supabase.from('comments').delete().eq('id', commentId);
     if (error) this.fail('deleteComment', error);
+  }
+
+  async voteOnComment(commentId: string, value: 1 | -1 | 0): Promise<void> {
+    // A trigger keeps comments.up_count/down_count (and the generated score) in
+    // step; RLS allows a vote only on a comment the user can actually see.
+    if (value === 0) {
+      const { error } = await this.supabase
+        .from('comment_votes')
+        .delete()
+        .eq('comment_id', commentId)
+        .eq('user_id', this.userId);
+      if (error) this.fail('voteOnComment(clear)', error);
+      return;
+    }
+    const { error } = await this.supabase.from('comment_votes').upsert(
+      { comment_id: commentId, user_id: this.userId, value },
+      { onConflict: 'comment_id,user_id' },
+    );
+    if (error) this.fail('voteOnComment', error);
+  }
+
+  async listMyVotes(commentIds: string[]): Promise<Record<string, 1 | -1>> {
+    if (commentIds.length === 0) return {};
+    const { data, error } = await this.supabase
+      .from('comment_votes')
+      .select('comment_id, value')
+      .eq('user_id', this.userId)
+      .in('comment_id', commentIds);
+    if (error) this.fail('listMyVotes', error);
+    const votes: Record<string, 1 | -1> = {};
+    for (const row of data as { comment_id: string; value: number }[]) {
+      votes[row.comment_id] = row.value === 1 ? 1 : -1;
+    }
+    return votes;
+  }
+
+  async setBookPublication(
+    bookId: string,
+    patch: {
+      visibility?: BookVisibility;
+      status?: PublicationStatus;
+      freeChapterCount?: number;
+      coinsPerChapter?: number;
+    },
+  ): Promise<BookSummary> {
+    // RLS: only the book owner may update.
+    const update: Record<string, string | number> = {};
+    if (patch.visibility) update.visibility = patch.visibility;
+    if (patch.status) update.status = patch.status;
+    // 0 is a meaningful value here (a free head of 0, or a free book), so guard
+    // on undefined rather than falsiness.
+    if (patch.freeChapterCount !== undefined) {
+      update.free_chapter_count = Math.max(0, Math.floor(patch.freeChapterCount));
+    }
+    if (patch.coinsPerChapter !== undefined) {
+      update.coins_per_chapter = Math.max(0, Math.floor(patch.coinsPerChapter));
+    }
+    const { data, error } = await this.supabase
+      .from('books')
+      .update(update)
+      .eq('id', bookId)
+      .select()
+      .single();
+    if (error) this.fail('setBookPublication', error);
+    return rowToBook(data as BookRow);
+  }
+
+  // --- Coins & entitlements ---------------------------------------------------
+
+  async getWallet(): Promise<Wallet> {
+    const { data, error } = await this.supabase
+      .from('profiles')
+      .select('coin_balance')
+      .eq('user_id', this.userId)
+      .maybeSingle();
+    if (error) this.fail('getWallet', error);
+    return { balance: (data as { coin_balance: number } | null)?.coin_balance ?? 0 };
+  }
+
+  async topUpDemo(amount: number): Promise<number> {
+    const { data, error } = await this.supabase.rpc('grant_demo_coins', { p_amount: amount });
+    if (error) this.fail('topUpDemo', error);
+    return (data as number) ?? 0;
+  }
+
+  async listMyUnlocks(bookId: string): Promise<number[]> {
+    // RLS returns only this user's unlock rows.
+    const { data, error } = await this.supabase
+      .from('chapter_unlocks')
+      .select('chapter_index')
+      .eq('book_id', bookId)
+      .order('chapter_index');
+    if (error) this.fail('listMyUnlocks', error);
+    return (data as { chapter_index: number }[]).map((r) => r.chapter_index);
+  }
+
+  async unlockChapter(bookId: string, chapterIndex: number): Promise<PurchaseResult> {
+    const { data, error } = await this.supabase
+      .rpc('unlock_chapter', { p_book_id: bookId, p_chapter_index: chapterIndex })
+      .single();
+    if (error) this.fail('unlockChapter', error);
+    return rowToPurchase(data as PurchaseRow);
+  }
+
+  async unlockBook(bookId: string): Promise<PurchaseResult> {
+    const { data, error } = await this.supabase
+      .rpc('unlock_book', { p_book_id: bookId })
+      .single();
+    if (error) this.fail('unlockBook', error);
+    return rowToPurchase(data as PurchaseRow);
+  }
+
+  async readChapter(bookId: string, chapterIndex: number): Promise<ReadChapter | undefined> {
+    const { data, error } = await this.supabase
+      .rpc('read_public_chapter', { p_book_id: bookId, p_chapter_index: chapterIndex })
+      .maybeSingle();
+    if (error) this.fail('readChapter', error);
+    return data ? rowToReadChapter(data as ReadChapterRow) : undefined;
   }
 
   async getVoiceCast(bookId: string): Promise<VoiceCast | undefined> {

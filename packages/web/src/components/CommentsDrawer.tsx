@@ -18,6 +18,8 @@ interface Props {
   chapterTitle: string;
   /** Own comments get a delete affordance; RLS enforces it server-side too. */
   currentUserId?: string;
+  /** False for an anonymous reader: the discussion reads, the composer asks. */
+  canPost?: boolean;
   open: boolean;
   onClose: () => void;
   colors: CommentsColors;
@@ -33,6 +35,7 @@ export function CommentsDrawer({
   chapterIndex,
   chapterTitle,
   currentUserId,
+  canPost,
   open,
   onClose,
   colors,
@@ -164,6 +167,17 @@ export function CommentsDrawer({
               {error}
             </p>
           ) : null}
+          {canPost === false ? (
+            // Anonymous readers still get the discussion — posting is the part
+            // that needs an account, and the ask lands where the intent is.
+            <p className="text-center text-sm" style={{ color: colors.muted }}>
+              <a href="/login" className="font-semibold underline-offset-2 hover:underline" style={{ color: colors.accent }}>
+                Sign in
+              </a>{' '}
+              to join the discussion.
+            </p>
+          ) : (
+            <>
           <textarea
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
@@ -183,6 +197,8 @@ export function CommentsDrawer({
               {posting ? 'Posting…' : 'Post'}
             </button>
           </div>
+            </>
+          )}
         </div>
       </aside>
     </div>

@@ -3,8 +3,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import Link from 'next/link';
 import {
-  buildReaderHtml,
   formatPassageShare,
+  remainingUnlockCost,
   HIGHLIGHT_COLORS,
   READER_THEMES,
   type Annotation,
@@ -19,13 +19,27 @@ import { KokoroTtsController, KOKORO_DEFAULT_VOICE } from '@/lib/tts/kokoro';
 import { KOKORO_VOICES } from '@/lib/tts/voices';
 import { useIsElectron } from '@/lib/useIsElectron';
 import { CommentsDrawer } from '@/components/CommentsDrawer';
+import { ReaderPaywall } from '@/components/ReaderPaywall';
+import { ChapterView, type ReaderHandle } from '@/components/reader/ChapterView';
+import {
+  createLibrarySource,
+  createPublicSource,
+  type LoadedChapter,
+  type PublicSourceInit,
+} from '@/components/reader/source';
 
 type TtsPlayer = WebTtsController | KokoroTtsController;
 type TtsEngine = 'kokoro' | 'system';
 
 interface ReaderProps {
   book: BookSummary;
-  chapters: Chapter[];
+  /** The owner's book, already in memory. Omit for the public reader. */
+  chapters?: Chapter[];
+  /**
+   * Public-series mode: chapters load lazily through the entitlement gate and
+   * writes are capability-gated. One reader, two data sources.
+   */
+  publicSeries?: Omit<PublicSourceInit, 'onAuthRequired'>;
   initialAnnotations: Annotation[];
   initialPosition: ReadingPosition | null;
   initialPreferences?: ReaderPreferences;
@@ -33,6 +47,9 @@ interface ReaderProps {
   offline?: boolean;
   /** Signed-in user id — enables deleting your own comments. */
   currentUserId?: string;
+  /** Where the back link goes (defaults to the personal library). */
+  backHref?: string;
+  backLabel?: string;
 }
 
 interface Selection {
@@ -74,15 +91,6 @@ const PlayerIcon = ({ d, filled }: { d: string; filled?: boolean }) => (
   </svg>
 );
 
-type ReaderBridge = {
-  scrollToOffset: (offset: number) => void;
-  turnPage: (delta: number) => void;
-  markSentence: (start: number, end: number) => void;
-  clearSentence: () => void;
-  beginExtend: (start: number, end: number) => void;
-  endExtend: () => void;
-};
-
 /** Head … tail of a selection so a multi-page range is verifiable at a glance. */
 function rangePreview(text: string): string {
   const s = text.replace(/\s+/g, ' ').trim();
@@ -92,14 +100,25 @@ function rangePreview(text: string): string {
 export function Reader({
   book,
   chapters,
+  publicSeries,
   initialAnnotations,
   initialPosition,
   initialPreferences,
   offline,
   currentUserId,
+  backHref = '/library',
+  backLabel = 'Library',
 }: ReaderProps) {
+  // The reader reads through a ChapterSource seam: the owner path wraps the
+  // in-memory book (peek resolves synchronously, so behavior is identical to
+  // before the seam existed), while a published series comes through a lazy,
+  // entitlement-gated source. Same view, different data.
+  const source = useMemo(
+    () => (publicSeries ? createPublicSource(publicSeries) : createLibrarySource(chapters ?? [])),
+    [chapters, publicSeries],
+  );
   const [chapterIndex, setChapterIndex] = useState(
-    Math.min(initialPosition?.chapterIndex ?? 0, chapters.length - 1),
+    Math.min(initialPosition?.chapterIndex ?? 0, source.count - 1),
   );
   const [commentsOpen, setCommentsOpen] = useState(false);
   const [themeMode, setThemeMode] = useState<'fixed' | 'auto'>(
@@ -201,7 +220,7 @@ export function Reader({
     }, 600);
   }, [fixedTheme, themeMode, lightChoice, darkChoice, fontSize, pagination, rate, voice]);
 
-  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const viewRef = useRef<ReaderHandle>(null);
   const activeTocRef = useRef<HTMLButtonElement>(null);
   const offsetRef = useRef(initialPosition?.offset ?? 0);
   const [furthest, setFurthest] = useState(initialPosition?.furthest);
@@ -211,22 +230,45 @@ export function Reader({
   const [ttsProgress, setTtsProgress] = useState<number>();
   const saveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
-  const chapter = chapters[chapterIndex];
-  const chapterText = useMemo(() => chapter?.paragraphs.join('\n') ?? '', [chapter]);
+  // The current chapter's body. The owner's is cached from the first render;
+  // a public chapter is fetched, so the view shows the chapter's shell (title,
+  // chrome, TOC) while the text is on its way.
+  const [chapter, setChapter] = useState<LoadedChapter | undefined>(() =>
+    source.peek(Math.min(initialPosition?.chapterIndex ?? 0, source.count - 1)),
+  );
+  const [loadingChapter, setLoadingChapter] = useState(false);
+  /** Bumped after a purchase, to re-read the chapter now that it's unlocked. */
+  const [chapterEpoch, setChapterEpoch] = useState(0);
+
+  useEffect(() => {
+    const cached = source.peek(chapterIndex);
+    if (cached) {
+      setChapter(cached);
+      setLoadingChapter(false);
+      source.prefetch(chapterIndex + 1);
+      return;
+    }
+    let cancelled = false;
+    setLoadingChapter(true);
+    void source.getChapter(chapterIndex).then((loaded) => {
+      if (cancelled) return;
+      setChapter(loaded);
+      setLoadingChapter(false);
+      source.prefetch(chapterIndex + 1);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [chapterIndex, chapterEpoch, source]);
+
+  const chapterTitle = chapter?.title ?? source.titles[chapterIndex] ?? '';
+  const chapterText = useMemo(() => chapter?.paragraphs?.join('\n') ?? '', [chapter]);
   const chapterAnnotations = useMemo(
     () => annotations.filter((a) => a.locator.chapterIndex === chapterIndex),
     [annotations, chapterIndex],
   );
-  const html = useMemo(
-    () =>
-      chapter ? buildReaderHtml(chapter, chapterAnnotations, { theme, fontSize, pagination }) : '',
-    [chapter, chapterAnnotations, theme, fontSize, pagination],
-  );
-
-  const bridge = useCallback((): ReaderBridge | undefined => {
-    return (iframeRef.current?.contentWindow as (Window & { __reader?: ReaderBridge }) | null)
-      ?.__reader;
-  }, []);
+  /** The live page view; undefined only before the first render. */
+  const bridge = useCallback((): ReaderHandle | undefined => viewRef.current ?? undefined, []);
 
   const ttsContinueRef = useRef(false);
   const ttsStaleRef = useRef(false);
@@ -247,7 +289,7 @@ export function Reader({
           if (ttsAdvancingRef.current) return;
           ttsAdvancingRef.current = true;
           setChapterIndex((index) => {
-            if (index + 1 >= chapters.length) {
+            if (index + 1 >= source.count) {
               ttsAdvancingRef.current = false;
               return index;
             }
@@ -258,7 +300,7 @@ export function Reader({
         }
       });
     },
-    [bridge, chapters.length],
+    [bridge, source.count],
   );
 
   // Sentence transport that also crosses chapter boundaries: at the last line
@@ -270,14 +312,14 @@ export function Reader({
     if (!tts) return;
     const { sentenceIndex, totalSentences, playing } = tts.status;
     if (totalSentences > 0 && sentenceIndex >= totalSentences - 1) {
-      if (chapterIndex + 1 >= chapters.length) return;
+      if (chapterIndex + 1 >= source.count) return;
       ttsContinueRef.current = playing;
       offsetRef.current = 0;
       setChapterIndex(chapterIndex + 1);
     } else {
       tts.next();
     }
-  }, [chapterIndex, chapters.length]);
+  }, [chapterIndex, source.count]);
 
   const ttsPrev = useCallback(() => {
     const tts = ttsRef.current;
@@ -408,6 +450,10 @@ export function Reader({
         }
         return prior;
       });
+      // An anonymous reader still gets the in-session "furthest point" chrome;
+      // only the server write needs a session (and is silent about it — being
+      // nagged to sign in for scrolling would be obnoxious).
+      if (!source.capabilities.canPersistPosition) return;
       if (saveTimer.current) clearTimeout(saveTimer.current);
       saveTimer.current = setTimeout(() => {
         void fetch(`/api/books/${book.id}/position`, {
@@ -417,81 +463,61 @@ export function Reader({
         }).catch(() => undefined);
       }, 800);
     },
-    [book.id, chapterIndex],
+    [book.id, chapterIndex, source],
   );
 
   const reloadAnnotations = useCallback(async () => {
+    if (!source.capabilities.canAnnotate) return;
     const response = await fetch(`/api/books/${book.id}/annotations`);
     if (response.ok) {
       const body = (await response.json()) as { annotations: Annotation[] };
       setAnnotations(body.annotations);
     }
-  }, [book.id]);
+  }, [book.id, source]);
 
-  // Bridge messages from the reader iframe.
-  useEffect(() => {
-    const onMessage = (event: MessageEvent) => {
-      const data = event.data as { source?: string; payload?: string };
-      if (data?.source !== 'inkread-reader' || !data.payload) return;
-      const msg = JSON.parse(data.payload) as { type: string; [key: string]: unknown };
-      switch (msg.type) {
-        case 'ready':
-          if (offsetRef.current > 0) bridge()?.scrollToOffset(offsetRef.current);
-          break;
-        case 'selection':
-          if (msg.clear) setSelection(undefined);
-          else
-            setSelection({
-              start: Number(msg.start),
-              end: Number(msg.end),
-              text: String(msg.text ?? ''),
-            });
-          break;
-        case 'extendPoint':
-          setExtend((prev) =>
-            prev
-              ? {
-                  ...prev,
-                  range: {
-                    start: Number(msg.start),
-                    end: Number(msg.end),
-                    text: String(msg.text ?? ''),
-                  },
-                }
-              : prev,
-          );
-          break;
-        case 'scroll':
-          savePosition(Number(msg.offset) || 0);
-          break;
-        case 'tapHighlight': {
-          const annotation = annotations.find((a) => a.id === msg.id);
-          if (annotation) setActing(annotation);
-          break;
+  // --- Page view events ------------------------------------------------------
+  // The view reports in chapter offsets; the chrome owns what they mean.
+
+  /** Laid out and ready — restore the reading position we were sent with. */
+  const onViewReady = useCallback(() => {
+    if (offsetRef.current > 0) viewRef.current?.scrollToOffset(offsetRef.current);
+  }, []);
+
+  const onExtendPoint = useCallback((range: { start: number; end: number; text: string }) => {
+    setExtend((prev) => (prev ? { ...prev, range } : prev));
+  }, []);
+
+  const onTapHighlight = useCallback(
+    (id: string) => {
+      const annotation = annotations.find((a) => a.id === id);
+      if (annotation) setActing(annotation);
+    },
+    [annotations],
+  );
+
+  /** A page turn ran off the chapter — flow into the neighbour. */
+  const onPageEdge = useCallback(
+    (direction: 'prev' | 'next') => {
+      setChapterIndex((index) => {
+        if (direction === 'next' && index + 1 < source.count) {
+          offsetRef.current = 0;
+          return index + 1;
         }
-        case 'pageEdge':
-          setChapterIndex((index) => {
-            if (msg.dir === 'next' && index + 1 < chapters.length) {
-              offsetRef.current = 0;
-              return index + 1;
-            }
-            if (msg.dir === 'prev' && index > 0) {
-              // Land on the last page of the previous chapter.
-              offsetRef.current = Number.MAX_SAFE_INTEGER;
-              return index - 1;
-            }
-            return index;
-          });
-          break;
-        case 'tap':
-          setTocOpen(false);
-          setThemeOpen(false);
-          break;
-      }
-    };
-    window.addEventListener('message', onMessage);
-    return () => window.removeEventListener('message', onMessage);
-  }, [annotations, bridge, chapters.length, reloadAnnotations, savePosition]);
+        if (direction === 'prev' && index > 0) {
+          // Land on the last page of the previous chapter.
+          offsetRef.current = Number.MAX_SAFE_INTEGER;
+          return index - 1;
+        }
+        return index;
+      });
+    },
+    [source.count],
+  );
+
+  const onTapPage = useCallback(() => {
+    setTocOpen(false);
+    setThemeOpen(false);
+  }, []);
 
   // Tear down whichever TTS engine is live when leaving the reader.
   useEffect(() => {
@@ -501,6 +527,10 @@ export function Reader({
   const createHighlight = useCallback(
     async (start: number, end: number, passage: string, color: HighlightColor, note?: string) => {
       if (!chapter) return;
+      // Annotating someone else's published book is fine (the row is yours) —
+      // but you have to be signed in, so an anonymous reader is prompted here
+      // rather than losing the highlight silently.
+      if (!source.requireAuth(note ? 'note' : 'highlight')) return;
       await fetch(`/api/books/${book.id}/annotations`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -511,12 +541,12 @@ export function Reader({
           passage,
           note,
           color,
-          chapterTitle: chapter.title,
+          chapterTitle,
         }),
       });
       await reloadAnnotations();
     },
-    [book.id, chapter, chapterIndex, reloadAnnotations],
+    [book.id, chapter, chapterIndex, chapterTitle, reloadAnnotations, source],
   );
 
   const addHighlight = useCallback(
@@ -647,7 +677,22 @@ export function Reader({
     ttsRef.current?.setRate(next);
   }, [rate]);
 
-  if (!chapter) return null;
+  // A source with no chapters at all (an empty book) has nothing to show.
+  if (source.count === 0) return null;
+
+  const { canComment } = source.capabilities;
+  /** Owner-only chrome: Notes and Voices are library tools, not reading tools. */
+  const isLibrary = !publicSeries;
+
+  // What "unlock the rest of the book" would cost from here — the paywall's
+  // second offer. Same pricing rules the server charges (core), so the quote
+  // and the charge can't drift.
+  const pricing = source.pricing;
+  const remainingBookCost = pricing
+    ? remainingUnlockCost(pricing, pricing.chapterCount, source.unlocked ?? [])
+    : 0;
+  const remainingLocked =
+    pricing && pricing.coinsPerChapter > 0 ? remainingBookCost / pricing.coinsPerChapter : 0;
 
   const themeColors = READER_THEMES[theme];
   const panelStyle = {
@@ -697,8 +742,8 @@ export function Reader({
         }`}
       >
         <div className="flex min-w-0 items-stretch">
-          <Link href="/" onClick={teardownTts} className={`${chromeButton} shrink-0 font-medium`}>
-            ← Library
+          <Link href={backHref} onClick={teardownTts} className={`${chromeButton} shrink-0 font-medium`}>
+            ← {backLabel}
           </Link>
           <span className="flex items-center truncate px-1.5 font-semibold opacity-80">
             {book.title}
@@ -739,20 +784,29 @@ export function Reader({
           >
             Comments
           </button>
-          <Link href={`/notes/${book.id}`} onClick={teardownTts} className={chromeButton}>
-            Notes
-          </Link>
-          <Link href={`/voice/${book.id}`} onClick={teardownTts} className={chromeButton}>
-            Voices
-          </Link>
+          {isLibrary ? (
+            <>
+              <Link href={`/notes/${book.id}`} onClick={teardownTts} className={chromeButton}>
+                Notes
+              </Link>
+              <Link href={`/voice/${book.id}`} onClick={teardownTts} className={chromeButton}>
+                Voices
+              </Link>
+            </>
+          ) : (
+            <span className="flex items-center px-2.5 text-xs font-semibold opacity-70">
+              {source.wallet ? `${source.wallet.balance} coins` : null}
+            </span>
+          )}
         </div>
       </header>
 
       <CommentsDrawer
         bookId={book.id}
         chapterIndex={chapterIndex}
-        chapterTitle={chapter?.title ?? ''}
+        chapterTitle={chapterTitle}
         currentUserId={currentUserId}
+        canPost={canComment}
         open={commentsOpen}
         onClose={() => setCommentsOpen(false)}
         colors={{
@@ -764,14 +818,60 @@ export function Reader({
         }}
       />
 
-      <div className={`relative flex-1 ${ttsOpen ? 'pb-14' : ''}`}>
-        <iframe
-          ref={iframeRef}
-          srcDoc={html}
-          sandbox="allow-scripts allow-same-origin"
-          className="h-full w-full border-0"
-          title={chapter.title}
-        />
+      {/* min-h-0: a flex item defaults to min-height:auto, so without this the
+          chapter's own height wins and the whole window scrolls instead of the
+          page. (The old iframe hid this — it never grew with its content.) */}
+      <div className={`relative min-h-0 flex-1 ${ttsOpen ? 'pb-14' : ''}`}>
+        {chapter?.paragraphs && !chapter.locked ? (
+          <ChapterView
+            ref={viewRef}
+            title={chapter.title}
+            paragraphs={chapter.paragraphs}
+            annotations={chapterAnnotations}
+            theme={theme}
+            fontSize={fontSize}
+            pagination={pagination}
+            onReady={onViewReady}
+            onSelection={setSelection}
+            onExtendPoint={onExtendPoint}
+            onPosition={savePosition}
+            onTapHighlight={onTapHighlight}
+            onPageEdge={onPageEdge}
+            onTap={onTapPage}
+          />
+        ) : chapter?.locked ? (
+          // A locked chapter is a data state, not a different page: the reader
+          // keeps its chrome, TOC and theme, and the body is the paywall.
+          <div className="h-full overflow-y-auto px-6 py-10">
+            <div className="mx-auto max-w-md">
+              <h1 className="text-center font-serif text-2xl">{chapterTitle}</h1>
+              <ReaderPaywall
+                bookId={book.id}
+                chapterIndex={chapterIndex}
+                coinCost={chapter.coinCost}
+                signedIn={canComment}
+                balance={source.wallet?.balance ?? 0}
+                remainingCount={remainingLocked}
+                remainingBookCost={remainingBookCost}
+                colors={{
+                  bg: themeColors.bg,
+                  fg: themeColors.fg,
+                  accent: themeColors.accent,
+                  muted: mutedColor,
+                  border: panelStyle.borderColor,
+                }}
+                onUnlocked={async () => {
+                  await source.onUnlocked?.(chapterIndex);
+                  setChapterEpoch((epoch) => epoch + 1);
+                }}
+              />
+            </div>
+          </div>
+        ) : loadingChapter ? (
+          <div className="flex h-full items-center justify-center text-sm" style={{ color: mutedColor }}>
+            Opening {chapterTitle}…
+          </div>
+        ) : null}
 
         {anyMenuOpen ? (
           <button
@@ -791,7 +891,7 @@ export function Reader({
                 ↩ Go to where I left off
               </button>
             ) : null}
-            {chapters.map((c, i) => {
+            {source.titles.map((title, i) => {
               const current = i === chapterIndex;
               return (
                 <button
@@ -802,7 +902,7 @@ export function Reader({
                     current ? 'bg-[var(--panel-hover)] font-bold text-[var(--panel-accent)]' : ''
                   }`}
                 >
-                  {c.title}
+                  {title}
                 </button>
               );
             })}
@@ -1317,7 +1417,7 @@ export function Reader({
           onClick={goToFurthest}
           className="absolute bottom-14 right-6 z-10 rounded-full bg-[var(--panel-bg)] px-4 py-2 text-xs font-semibold text-[var(--panel-accent)] shadow-lg ring-1 ring-[var(--panel-border)] transition hover:bg-[var(--panel-accent-soft)]"
         >
-          Resume at {chapters[furthest.chapterIndex]?.title ?? 'furthest point'} →
+          Resume at {source.titles[furthest.chapterIndex] ?? 'furthest point'} →
         </button>
       ) : null}
 
@@ -1332,10 +1432,10 @@ export function Reader({
           ‹ Prev
         </button>
         <span className="flex items-center truncate text-xs opacity-50">
-          {chapterIndex + 1} / {chapters.length} · {chapter.title}
+          {chapterIndex + 1} / {source.count} · {chapterTitle}
         </span>
         <button
-          disabled={pagination === 'scroll' && chapterIndex >= chapters.length - 1}
+          disabled={pagination === 'scroll' && chapterIndex >= source.count - 1}
           onClick={() =>
             pagination === 'paged' ? bridge()?.turnPage(1) : goToChapter(chapterIndex + 1)
           }
